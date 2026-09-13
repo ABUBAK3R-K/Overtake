@@ -12,3 +12,6 @@ data/processed/*
 
 # Frontend
 node_modules/
+
+# Research papers and documents
+*.pdf

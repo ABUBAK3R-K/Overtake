@@ -1,0 +1,20 @@
+#!/bin/sh
+# Reject commits that don't update PROJECT_STATUS.md.
+#
+# Keeps the status file in step with the code for both lanes.
+# One-time setup per clone:  git config core.hooksPath .githooks
+
+if git diff --cached --name-only | grep -qx "PROJECT_STATUS.md"; then
+    exit 0
+fi
+
+echo "" >&2
+echo "Commit rejected: PROJECT_STATUS.md is not part of this commit." >&2
+echo "" >&2
+echo "Update it before committing:" >&2
+echo "  - tick off finished milestones / move 'Next up'" >&2
+echo "  - note new decisions, contract changes or issues" >&2
+echo "  - add one line to the Change Log" >&2
+echo "then: git add PROJECT_STATUS.md" >&2
+echo "" >&2
+exit 1
