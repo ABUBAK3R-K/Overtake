@@ -1,0 +1,4 @@
+# Placeholder for the local one-command demo (Design.md Section 8, P1).
+# backend + frontend services and the mounted data volume are added in the
+# packaging step, once both lanes have API endpoints.
+services: {}

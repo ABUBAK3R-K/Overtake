@@ -1,0 +1,11 @@
+# Stack per Design.md Section 2. Pinned to the versions the pipeline was built on.
+fastf1==3.8.3
+pandas==2.3.3
+numpy==2.5.3
+pyarrow==25.0.1
+duckdb==1.5.5
+pytest==9.1.1
+
+# Modeling (Days 4-7) — pin once installed:
+# xgboost
+# scikit-learn

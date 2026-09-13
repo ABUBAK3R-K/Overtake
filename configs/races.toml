@@ -1,0 +1,57 @@
+# Fixed, versioned race list for Overtake (PRD FR-1, NFR "Reproducibility").
+# Changing this list changes every downstream result — tell your partner first.
+#
+# All 2023 so tyre compound naming and car regulations are consistent.
+# Coverage requirements from PRD Section 11: at least one wet race and
+# at least one safety-car-heavy race.
+#
+# race_id format: <season>_<short_circuit_name>. It is the primary key used
+# in every Parquet table, so never rename an existing id.
+
+[[races]]
+race_id = "2023_bahrain"
+season = 2023
+round = 1
+why = "Dry baseline, high tyre degradation"
+
+[[races]]
+race_id = "2023_australia"
+season = 2023
+round = 3
+why = "Safety-car heavy: three red flags, multiple SC periods"
+
+[[races]]
+race_id = "2023_monaco"
+season = 2023
+round = 6
+why = "Wet: rain in the final third forced inter tyre calls"
+
+[[races]]
+race_id = "2023_spain"
+season = 2023
+round = 7
+why = "Dry, conventional multi-stop race"
+
+[[races]]
+race_id = "2023_britain"
+season = 2023
+round = 10
+why = "Mid-race safety car changed pit strategy"
+
+[[races]]
+race_id = "2023_netherlands"
+season = 2023
+round = 13
+why = "Wet: rain at start and end, red flag"
+
+[[races]]
+race_id = "2023_italy"
+season = 2023
+round = 14
+why = "Low degradation, one-stop contrast case"
+
+[[races]]
+race_id = "2023_singapore"
+season = 2023
+round = 15
+why = "Safety car + late VSC decided the strategy battle"

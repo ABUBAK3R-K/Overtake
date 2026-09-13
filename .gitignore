@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Data: regenerated locally by `python -m src.ingestion.run_ingestion`
+data/cache/*
+!data/cache/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Frontend
+node_modules/
