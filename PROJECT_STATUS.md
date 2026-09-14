@@ -7,7 +7,7 @@
 > How to update: tick off finished items, move "Next up", add any new
 > decisions/issues, and add one line to the Change Log at the bottom.
 
-**Last updated:** 2026-09-13 · Prediction Lane · Days 1–2 ingestion complete
+**Last updated:** 2026-09-14 · Prediction Lane · Day 3 no-leakage guard + EDA complete
 
 ---
 
@@ -33,9 +33,9 @@ Scope source of truth: `PRD.md` (what) · `Design.md` (how) · `overtake-15-day-
 
 | Lane | Owner | Status |
 |---|---|---|
-| Prediction (ingestion, tyre model, lap-time model) | Abubaker | 🟢 Days 1–2 done |
+| Prediction (ingestion, tyre model, lap-time model) | Abubaker | 🟢 Days 1–3 done |
 | Decision-Making (replay, safety car, Monte Carlo, optimizer, backtest) | Partner | ⚪ Not yet reported here |
-| Shared (schema, no-leakage guard, integration, Docker) | Both | 🟡 Schema drafted, guard pending (Day 3) |
+| Shared (schema, no-leakage guard, integration, Docker) | Both | 🟡 Schema drafted, guard written — awaiting partner review |
 
 Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at risk
 
@@ -48,7 +48,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 |---|---|---|
 | 1 | Repo scaffold (Design.md §3), FastF1 cache in `data/cache/` | ✅ |
 | 2 | Ingest laps, sectors, telemetry, tyre compound/age → Parquet + DuckDB | ✅ |
-| 3 | No-leakage guard `as_of_lap()` + EDA (paired) | ⬜ |
+| 3 | No-leakage guard `as_of_lap()` + EDA (paired) | ✅ (partner review pending) |
 | 4–5 | Tyre model → `predict_tyre_degradation(compound, age, circuit, track_temp)` | ⬜ **handoff due end of Day 5** |
 | 6–7 | Lap-time model → `predict_lap_time(state, driver)` | ⬜ **handoff Day 6–7** |
 | 8 | MAE/RMSE report for both models (held-out laps and held-out races) | ⬜ |
@@ -61,7 +61,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 |---|---|---|
 | 1 | Shared data schema agreed | 🟡 draft — see §5 |
 | 2 | Ingest pit stops, race control, weather → Parquet | ⬜ |
-| 3 | No-leakage guard + EDA (paired) | ⬜ |
+| 3 | No-leakage guard + EDA (paired) | 🟡 guard in `src/preprocessing/leakage.py` — please review |
 | 4 | `RaceState` + bare replay loop | ⬜ |
 | 5 | Safety-car ("ghost car") model | ⬜ |
 | 6 | Wire in prediction functions | ⬜ |
@@ -87,6 +87,14 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
   (regenerate with `python -m src.ingestion.run_ingestion`; ~30 s per race on first download)
 - `tests/test_ingestion.py`: 10 offline tests passing, including leakage checks (derived columns identical when future laps are removed)
 
+**Prediction Lane — Day 3**
+- `src/preprocessing/leakage.py`: `as_of_lap(df, lap_col, current_lap)` (signature exactly as Design.md §5)
+  plus `assert_as_of_lap()` / `LeakageError` for checking the output of feature and state builders
+- `tests/test_leakage.py`: 13 tests (boundaries, rows with missing lap dropped, input not mutated, bad args) — suite now 23 passing
+- `notebooks/01_eda.ipynb`: coverage, clean-lap filter, compound mix, outliers, degradation signal, red-flag gaps, telemetry.
+  Headline: tyre-age effect 0.01–0.13 s/lap after controlling for lap and driver (Bahrain highest, Monaco lowest);
+  circuit matters more than compound
+
 ---
 
 ## 5. Shared Contracts & Decisions
@@ -95,6 +103,10 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 
 **Race list** (`configs/races.toml`) — ⚠️ *needs partner confirmation*:
 2023 Bahrain, Australia, Monaco (wet), Spain, Britain, Netherlands (wet), Italy, Singapore.
+
+**"As of lap N" semantics** — ⚠️ *needs partner confirmation*: the moment lap N has just been
+completed, so rows for lap N itself are visible. Rows with a missing lap are dropped (treated as possibly future).
+`as_of_lap()` returns a copy.
 
 **Storage convention:** `data/processed/<table>/<race_id>.parquet`; `src.ingestion.storage.connect()`
 exposes every table folder as a DuckDB view. Partner's tables should use the same layout
@@ -110,9 +122,10 @@ exposes every table folder as a DuckDB view. Partner's tables should use the sam
 
 ## 6. Next Up
 
-1. Confirm race list + schema additions with partner (§5)
-2. Day 3 (paired): write `src/preprocessing/leakage.py::as_of_lap()` + its unit test; EDA notebook
-3. Day 4: start tyre model — needs partner's per-lap `track_temp` (WeatherSnapshot table)
+1. Confirm with partner: race list, schema additions, and "as of lap N" semantics (§5); partner reviews `leakage.py`
+2. Day 4: `src/preprocessing/` clean-lap filter + `gap_to_leader` red-flag masking (rules from EDA §Takeaways)
+3. Day 4–5: tyre model `src/models/tyre.py` — dry compounds, compound as categorical, circuit feature,
+   fuel/lap effect removed from the target; needs partner's per-lap `track_temp` (WeatherSnapshot table)
 
 ---
 
@@ -122,7 +135,10 @@ exposes every table folder as a DuckDB view. Partner's tables should use the sam
 |---|---|---|
 | `gap_to_leader` inflated to 3000–4000 s on red-flag laps (Australia L8/55, Netherlands L64) | Would corrupt gap features | Mask/cap in `src/preprocessing/`; ingestion stays raw |
 | `races.weather_summary` covers the whole race | Leakage if used as a feature | Display only; per-lap weather from WeatherSnapshot |
-| Tyre model depends on partner's weather table | Day 4 start | Coordinate Day 2 output |
+| Tyre model depends on partner's weather table | Day 4 start | Coordinate Day 2 output; if late, train without temp first and add it when the table lands |
+| Only ~600 INTERMEDIATE laps (2 races) and 48 WET laps | No reliable wet tyre model | Tyre model is dry-only; wet handled as a flag (P1) |
+| Lap-to-lap noise (SD 0.3–0.8 s) ≫ per-lap degradation (~0.05 s) | Single-lap tyre MAE will look poor | Evaluate the degradation curve over a stint as well as per-lap MAE |
+| Telemetry summaries on red-flag laps include the stoppage (n_samples 12k–15k) | Garbage speed/throttle features | Drop with the neutralised-lap filter |
 | `predict_*` handoff by Day 5–6 is the sprint's tightest dependency | Blocks partner Day 6 | Flag early if slipping |
 
 ---
@@ -133,5 +149,6 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 |---|---|---|
+| 2026-09-14 | Abubaker | Day 3: `as_of_lap()` no-leakage guard + 13 tests, EDA notebook, findings and next steps |
 | 2026-09-13 | Abubaker | Add *.pdf to .gitignore and untrack research papers from git |
 | 2026-09-13 | Abubaker | Days 1–2: scaffold, FastF1 caching, lap/tyre/telemetry/race ingestion for 8 races, Parquet + DuckDB storage, 10 tests, status file + pre-commit hook |
