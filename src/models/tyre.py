@@ -93,7 +93,8 @@ def load_lap_frame(con=None) -> pd.DataFrame:
     return con.sql(f"""
         SELECT l.race_id, l.driver, l.lap_number, l.lap_time,
                l.pit_flag, l.pit_out_flag, l.track_status, l.is_accurate,
-               t.stint, t.compound, t.tyre_age_at_lap, r.circuit,
+               l.position, l.gap_to_leader,
+               t.stint, t.compound, t.tyre_age_at_lap, r.circuit, r.total_laps,
                {track_temp} AS track_temp
         FROM laps l
         JOIN tyres t USING (race_id, driver, lap_number)

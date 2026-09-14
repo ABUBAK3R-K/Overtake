@@ -7,7 +7,7 @@
 > How to update: tick off finished items, move "Next up", add any new
 > decisions/issues, and add one line to the Change Log at the bottom.
 
-**Last updated:** 2026-09-14 · Prediction Lane · Day 4 tyre model v1 trained, `predict_tyre_degradation()` ready (without track temp)
+**Last updated:** 2026-09-14 · Prediction Lane · Days 6–7 lap-time model done; both handoff functions ready (Day 5 track temp blocked on weather table)
 
 ---
 
@@ -33,7 +33,7 @@ Scope source of truth: `PRD.md` (what) · `Design.md` (how) · `overtake-15-day-
 
 | Lane | Owner | Status |
 |---|---|---|
-| Prediction (ingestion, tyre model, lap-time model) | Abubaker | 🟢 Days 1–4 done, ahead on Day 5 handoff |
+| Prediction (ingestion, tyre model, lap-time model) | Abubaker | 🟢 Days 1–7 done except track temp (⚠️ waiting on partner's `weather` table) |
 | Decision-Making (replay, safety car, Monte Carlo, optimizer, backtest) | Partner | ⚪ Not yet reported here |
 | Shared (schema, no-leakage guard, integration, Docker) | Both | 🟡 Schema drafted, guard written — awaiting partner review |
 
@@ -50,7 +50,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 | 2 | Ingest laps, sectors, telemetry, tyre compound/age → Parquet + DuckDB | ✅ |
 | 3 | No-leakage guard `as_of_lap()` + EDA (paired) | ✅ (partner review pending) |
 | 4–5 | Tyre model → `predict_tyre_degradation(compound, age, circuit, track_temp)` | 🟡 v1 usable now; track temp pending partner's weather table · **handoff due end of Day 5** |
-| 6–7 | Lap-time model → `predict_lap_time(state, driver)` | ⬜ **handoff Day 6–7** |
+| 6–7 | Lap-time model → `predict_lap_time(state, driver)` | ✅ ready for partner's Day 6 (see §5 contract notes) |
 | 8 | MAE/RMSE report for both models (held-out laps and held-out races) | ⬜ |
 | 9–10 | FastAPI: `/api/tyre/...`, `/api/lap-prediction/...` | ⬜ |
 | 11–13 | Tyre view + Model view (React + Plotly) | ⬜ |
@@ -111,6 +111,26 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 - Tests: `tests/test_cleaning.py` (6), `tests/test_tyre_model.py` (10, synthetic races with known wear) — suite 39 passing
 - Packages pinned: xgboost 3.4.1, scikit-learn 1.9.1, matplotlib 3.11.2
 
+**Prediction Lane — Day 5 (partial) + Days 6–7**
+- Day 5 track temp: ⚠️ blocked — no `weather` table yet. Nothing to change on our side: `python -m src.models.tyre` picks it up once it exists.
+- `src/models/lap_time.py`: XGBoost next-lap-time model. Features as of an anchor lap via `as_of_lap()` (driver's median of last 5 clean laps,
+  pace vs field, field pace) + race state at T−1 (compound, tyre age, position, gap ahead, gap to leader). Predicts lap time − reference pace,
+  absolute-error objective, trained on 52k (anchor, target) pairs at horizons 1–30 laps. `python -m src.models.lap_time` (~12 s) → `data/models/lap_time/`
+- Results — MAE (s) vs a baseline that repeats the driver's recent (last-5 median) pace:
+
+  | Split | Next lap: model | Next lap: baseline | All horizons: model | All horizons: baseline |
+  |---|---|---|---|---|
+  | Held-out race (new circuit) | **0.91** | 0.98 | **1.53** | 1.97 |
+  | Held-out late laps (train on first 70% of each race) | 1.48 | 1.46 | **2.87** | 3.13 |
+
+  Dry held-out races, next lap: 0.33–0.80 s. Wet Monaco/Netherlands: ~1.9 s (rain onset can't be seen from history).
+  The model's value is mostly over multi-lap horizons (fuel + tyre drift), which is what Monte Carlo needs.
+- Rejected: absolute pace / lap number features (memorise circuits, lost to baseline on held-out races); squared-error objective
+  (chased rain outliers); ratio target (no gain); random driver split (leaks same-race future conditions).
+- Speed: `predict_many()` for 500 sims × 20 drivers ≈ 40 ms per lap → ~1.1 s for a full remaining race (PRD §7 "few seconds").
+- `tests/test_lap_time_model.py`: 14 tests (history ignores laps after anchor, batch = single calls, SC scaling, fresh vs old tyres) — suite 53 passing
+- `tyre.load_lap_frame()` now also returns `position`, `gap_to_leader`, `total_laps`
+
 ---
 
 ## 5. Shared Contracts & Decisions
@@ -133,6 +153,18 @@ completed, so rows for lap N itself are visible. Rows with a missing lap are dro
   picks it up automatically.
 - Needs a trained model: run `python -m src.models.tyre` once after ingestion. Calls are memoised (~0.5 µs cached).
 
+**`predict_lap_time()` behaviour** — ⚠️ *tell partner before their Day 6; one additive contract change*:
+- **Contract change (additive):** `RaceState` needs a `race_id: str` field for the module-level `predict_lap_time(state, driver)`.
+  Signature unchanged. Without it, the function raises and points to the factory below.
+- Predicts lap `state.lap + 1` as a **racing lap**: no pit-lane time (strategy adds pit loss). `state.safety_car=True` → × 1.537
+  (median fully-neutralised lap / race median, from data).
+- `state.tyres[d] = (compound, age)` at the end of `state.lap`; next lap runs at age + 1. After a simulated stop set `(new_compound, 0)`.
+- `state.gaps` = gap to leader in seconds; the gap to the car ahead is derived from `positions` + `gaps`.
+- **Replay/API:** `predict_lap_time(state, driver)` uses real history up to `state.lap`.
+- **Monte Carlo:** `make_lap_time_predictor(race_id, decision_lap)` once, then call it with simulated states (`lap ≥ decision_lap`).
+  Real laps after the decision lap are never read. For speed step all sims together: `predictor.predict_many(states)` → one dict per state.
+- Wet compounds are accepted (unlike the tyre model), but wet accuracy is poor.
+
 **Storage convention:** `data/processed/<table>/<race_id>.parquet`; `src.ingestion.storage.connect()`
 exposes every table folder as a DuckDB view. Partner's tables should use the same layout
 (`pit_stops`, `race_control`, `weather`).
@@ -148,10 +180,9 @@ exposes every table folder as a DuckDB view. Partner's tables should use the sam
 ## 6. Next Up
 
 1. Confirm with partner: race list, schema additions, "as of lap N" semantics, and `predict_tyre_degradation()` behaviour (§5)
-2. Day 5: add track temp once the `weather` table lands and retrain; check whether it helps held-out-race error
-   (the only feature that could explain new-circuit wear). Tyre curve plot for the Tyre view.
-3. Day 6–7: lap-time model `src/models/lap_time.py` → `predict_lap_time(state, driver)`; features via `as_of_lap()`,
-   lagged telemetry, `clean_gap_to_leader()`
+2. Partner Day 6 integration: walk through §5 notes for both handoff functions; agree on `RaceState.race_id`
+3. When `weather` lands: retrain tyre model with track temp, compare held-out-race error
+4. Day 8: MAE/RMSE writeup for both models (numbers above are the starting point; add per-race tables + plots in a notebook)
 
 ---
 
@@ -164,6 +195,8 @@ exposes every table folder as a DuckDB view. Partner's tables should use the sam
 | Tyre model depends on partner's weather table | Day 4 start | Coordinate Day 2 output; if late, train without temp first and add it when the table lands |
 | Wear is hard to predict for an unseen circuit (held-out race curve error 0.48 s; Australia 1.3 s) | Weak "new circuit" story; demo races are all in training so the demo is unaffected | Track temp may help; report honestly in Day 8 writeup |
 | Target build is sensitive to how wear is parameterised (free per-age values gave multi-second swings at Monaco/Singapore) | Noisy labels | Piecewise-linear wear (knots at +10, +20 laps) in target build; revisit if lap-time model disagrees |
+| Lap-time model barely beats "repeat recent pace" for the very next lap (0.91 vs 0.98 s held-out races; tie on late laps) | Replay endpoint's one-lap prediction adds little | Value is at multi-lap horizons (1.53 vs 1.97 s); say so in Day 8 writeup. Ingested telemetry is unused so far, could try it |
+| Partner may call `predict_lap_time` per driver per sim (~7 ms each → minutes) | Misses PRD latency target | `predict_many()` documented in §5 |
 | Only ~600 INTERMEDIATE laps (2 races) and 48 WET laps | No reliable wet tyre model | Tyre model is dry-only; wet handled as a flag (P1) |
 | Lap-to-lap noise (SD 0.3–0.8 s) ≫ per-lap degradation (~0.05 s) | Single-lap tyre MAE will look poor | Evaluate the degradation curve over a stint as well as per-lap MAE |
 | Telemetry summaries on red-flag laps include the stoppage (n_samples 12k–15k) | Garbage speed/throttle features | Drop with the neutralised-lap filter |
@@ -177,6 +210,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 |---|---|---|
+| 2026-09-14 | Abubaker | Days 6–7: lap-time model + `predict_lap_time()` / `make_lap_time_predictor()` / batched `predict_many()`, 14 tests; Day 5 track temp blocked on weather table |
 | 2026-09-14 | Abubaker | Day 4: lap cleaning filters, tyre degradation model v1 + `predict_tyre_degradation()`, model config, 16 tests, pinned xgboost/scikit-learn/matplotlib |
 | 2026-09-14 | Abubaker | Day 3: `as_of_lap()` no-leakage guard + 13 tests, EDA notebook, findings and next steps |
 | 2026-09-13 | Abubaker | Add *.pdf to .gitignore and untrack research papers from git |
