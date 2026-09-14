@@ -1,0 +1,34 @@
+# Model settings (Design.md Section 3: configs/ holds model hyperparameters).
+# Changing these changes predictions the Decision-Making lane consumes —
+# retrain (`python -m src.models.tyre`) and note it in PROJECT_STATUS.md.
+
+[tyre]
+# "pooled" = one model with compound as a feature; "per_compound" = one model
+# per compound; "auto" = whichever has the lower leave-one-race-out curve MAE.
+# 2026-09-14: the two tied (curve MAE 0.49 vs 0.48 s on held-out races,
+# 0.19 vs 0.19 s on held-out stints), so the simpler pooled model is fixed
+# here rather than letting "auto" flip on noise.
+variant = "pooled"
+
+# Tyre ages <= this form the zero point: pace_loss is measured against the
+# same compound when it was this fresh. Out-laps are excluded, so age 1 alone
+# is too thin to anchor on.
+reference_max_age = 3
+
+# Ages above this are pooled when building training targets, and predictions
+# for older tyres are held at this age's value.
+max_age = 40
+
+# A race-compound needs this many clean laps (and this many at reference age)
+# to produce training targets; below that the estimate is mostly noise.
+min_laps = 30
+min_reference_laps = 8
+
+[tyre.xgboost]
+n_estimators = 300
+learning_rate = 0.05
+max_depth = 4
+min_child_weight = 20
+subsample = 0.8
+colsample_bytree = 1.0
+random_state = 42
