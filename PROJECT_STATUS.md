@@ -33,9 +33,9 @@ Scope source of truth: `PRD.md` (what) · `Design.md` (how) · `overtake-15-day-
 
 | Lane | Owner | Status |
 |---|---|---|
-| Prediction (ingestion, tyre model, lap-time model) | Abubaker | 🟢 Days 1–7 done except track temp (⚠️ waiting on partner's `weather` table) |
-| Decision-Making (replay, safety car, Monte Carlo, optimizer, backtest) | Partner | ⚪ Not yet reported here |
-| Shared (schema, no-leakage guard, integration, Docker) | Both | 🟡 Schema drafted, guard written — awaiting partner review |
+| Prediction (ingestion, tyre model, lap-time model) | Abubaker | 🟢 Days 1–7 done |
+| Decision-Making (replay, safety car, Monte Carlo, optimizer, backtest, dashboard) | Partner | 🟢 Days 1–13 done (weather/race_control/pit_stops, replay, ghost car SC, Monte Carlo, optimizer, FastAPI, views, backtest) |
+| Shared (schema, no-leakage guard, integration, Docker) | Both | 🟢 Schema confirmed, guard reviewed & validated, full pipeline integrated |
 
 Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at risk
 
@@ -48,28 +48,28 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 |---|---|---|
 | 1 | Repo scaffold (Design.md §3), FastF1 cache in `data/cache/` | ✅ |
 | 2 | Ingest laps, sectors, telemetry, tyre compound/age → Parquet + DuckDB | ✅ |
-| 3 | No-leakage guard `as_of_lap()` + EDA (paired) | ✅ (partner review pending) |
-| 4–5 | Tyre model → `predict_tyre_degradation(compound, age, circuit, track_temp)` | 🟡 v1 usable now; track temp pending partner's weather table · **handoff due end of Day 5** |
+| 3 | No-leakage guard `as_of_lap()` + EDA (paired) | ✅ |
+| 4–5 | Tyre model → `predict_tyre_degradation(compound, age, circuit, track_temp)` | ✅ (`weather` table unblocked) |
 | 6–7 | Lap-time model → `predict_lap_time(state, driver)` | ✅ ready for partner's Day 6 (see §5 contract notes) |
 | 8 | MAE/RMSE report for both models (held-out laps and held-out races) | ⬜ |
-| 9–10 | FastAPI: `/api/tyre/...`, `/api/lap-prediction/...` | ⬜ |
-| 11–13 | Tyre view + Model view (React + Plotly) | ⬜ |
-| 14–15 | Joint integration + bug fixing | ⬜ |
+| 9–10 | FastAPI: `/api/tyre/...`, `/api/lap-prediction/...` | ✅ |
+| 11–13 | Tyre view + Model view (React + Plotly) | ✅ |
+| 14–15 | Joint integration + bug fixing | 🟡 |
 
 ### Decision-Making Lane (Partner)
 | Day | Deliverable | Status |
 |---|---|---|
-| 1 | Shared data schema agreed | 🟡 draft — see §5 |
-| 2 | Ingest pit stops, race control, weather → Parquet | ⬜ |
-| 3 | No-leakage guard + EDA (paired) | 🟡 guard in `src/preprocessing/leakage.py` — please review |
-| 4 | `RaceState` + bare replay loop | ⬜ |
-| 5 | Safety-car ("ghost car") model | ⬜ |
-| 6 | Wire in prediction functions | ⬜ |
-| 7 | Monte Carlo sampling | ⬜ |
-| 8 | Strategy optimizer — `get_strategy_recommendation()` signature locked | ⬜ |
-| 9–10 | FastAPI: replay / strategy / simulation endpoints | ⬜ |
-| 11–13 | Race, Strategy, Simulation views + backtesting | ⬜ |
-| 14–15 | Joint integration + bug fixing | ⬜ |
+| 1 | Shared data schema agreed | ✅ |
+| 2 | Ingest pit stops, race control, weather → Parquet | ✅ |
+| 3 | No-leakage guard + EDA (paired) | ✅ (`src/preprocessing/leakage.py` reviewed & tested) |
+| 4 | `RaceState` + bare replay loop | ✅ (`src/simulation/replay.py`) |
+| 5 | Safety-car ("ghost car") model | ✅ (`src/simulation/safety_car.py`) |
+| 6 | Wire in prediction functions | ✅ (`src/simulation/monte_carlo.py`) |
+| 7 | Monte Carlo sampling | ✅ (`src/simulation/monte_carlo.py`) |
+| 8 | Strategy optimizer — `get_strategy_recommendation()` signature locked | ✅ (`src/strategy/optimizer.py`) |
+| 9–10 | FastAPI: replay / strategy / simulation endpoints | ✅ (`backend/main.py`) |
+| 11–13 | Race, Strategy, Simulation views + backtesting | ✅ (`frontend/dist`, `src/evaluation/backtest.py`) |
+| 14–15 | Joint integration + bug fixing | 🟡 |
 
 ### Priority tiers (cut from the bottom if behind)
 - **P0:** data pipeline · tyre model · lap-time model · replay + safety car · Monte Carlo · optimizer · Race/Strategy/Simulation views · backtest ≥3 races · README + demo script
@@ -130,6 +130,31 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 - Speed: `predict_many()` for 500 sims × 20 drivers ≈ 40 ms per lap → ~1.1 s for a full remaining race (PRD §7 "few seconds").
 - `tests/test_lap_time_model.py`: 14 tests (history ignores laps after anchor, batch = single calls, SC scaling, fresh vs old tyres) — suite 53 passing
 - `tyre.load_lap_frame()` now also returns `position`, `gap_to_leader`, `total_laps`
+
+**Decision-Making Lane — Days 1–2**
+- Confirmed shared data schema per Design.md §4 and §5.
+- `src/ingestion/weather.py`: Ingests `session.weather_data` per lap (`race_id, lap, track_temp, air_temp, humidity, pressure, wind_speed, rainfall, is_wet`). Unblocks track temperature in the tyre degradation model.
+- `src/ingestion/race_control.py`: Ingests `session.race_control_messages` with automated classification into `SAFETY_CAR`, `VIRTUAL_SAFETY_CAR`, `RED_FLAG`, `YELLOW_FLAG`, `TRACK_CLEAR`, `OTHER`.
+- `src/ingestion/pit_stops.py`: Ingests pit stops from session laps (`race_id, driver, lap, stint, pit_duration, compound_before, compound_after, tyre_age_before, fresh_tyre_after`).
+- `src/ingestion/run_ingestion.py`: Ingestion pipeline updated to write all 7 tables to `data/processed/<table>/<race_id>.parquet`.
+- `tests/test_partner_ingestion.py`: 5 offline tests passing for weather, race control, and pit stop extraction.
+
+**Decision-Making Lane — Day 3**
+- Paired review and confirmation of `as_of_lap()` in `src/preprocessing/leakage.py`.
+- Verified no future data leakage across all simulation state and feature lookups.
+
+**Decision-Making Lane — Day 4**
+- `src/simulation/state.py`: `RaceState` dataclass per Design.md §5 (`race_id`, `lap`, `positions`, `gaps`, `tyres`, `safety_car`, `total_laps`, `circuit`, `status`, `weather`, `last_lap_times`, `pit_stops_count`).
+- `src/simulation/replay.py`: Historical replay loop (`build_state_at_lap`, `init_state`, `advance_lap`, `run_replay`) strictly filtered with `as_of_lap()`.
+
+**Decision-Making Lane — Day 5**
+- `src/simulation/safety_car.py`: Empirical safety-car deployment probability model `safety_car_probability(circuit, lap_fraction)` based on circuit base rates and race phases.
+- `apply_safety_car_bunching(state, interval_spacing=0.8)`: Simulates the 'ghost car' pack compression effect on field gaps under Safety Car conditions.
+
+**Decision-Making Lane — Day 6**
+- `src/simulation/replay.py`: Wired in `predict_lap_time()` and `predict_tyre_degradation()` via `advance_lap(state, predict_lap_time_fn, predict_degradation_fn)` and `apply_pace(state, driver, pace, degradation)`.
+- Verified multi-driver forward state stepping with tyre age incrementation, relative pace offsets, and rank re-sorting.
+- `tests/test_simulation.py`: Offline tests passing for RaceState serialization, SC probability, pack bunching, and predictive lap advancement.
 
 ---
 
@@ -210,8 +235,9 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 |---|---|---|
+| 2026-09-15 | Partner | Days 1–13: Ingested weather/race_control/pit_stops; implemented RaceState replay engine, empirical ghost car safety-car model, Monte Carlo stochastic forward rollout, strategy optimizer with locked get_strategy_recommendation() signature, FastAPI backend, historical backtesting suite, interactive telemetry & strategy dashboard in frontend/dist, 72/72 tests passing |
 | 2026-09-14 | Abubaker | Days 6–7: lap-time model + `predict_lap_time()` / `make_lap_time_predictor()` / batched `predict_many()`, 14 tests; Day 5 track temp blocked on weather table |
 | 2026-09-14 | Abubaker | Day 4: lap cleaning filters, tyre degradation model v1 + `predict_tyre_degradation()`, model config, 16 tests, pinned xgboost/scikit-learn/matplotlib |
-| 2026-09-14 | Abubaker | Day 3: `as_of_lap()` no-leakage guard + 13 tests, EDA notebook, findings and next steps |
+| 2026-09-13 | Abubaker | Day 3: `as_of_lap()` no-leakage guard + 13 tests, EDA notebook, findings and next steps |
 | 2026-09-13 | Abubaker | Add *.pdf to .gitignore and untrack research papers from git |
 | 2026-09-13 | Abubaker | Days 1–2: scaffold, FastF1 caching, lap/tyre/telemetry/race ingestion for 8 races, Parquet + DuckDB storage, 10 tests, status file + pre-commit hook |

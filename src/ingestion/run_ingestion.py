@@ -17,19 +17,22 @@ import sys
 import time
 
 from src.ingestion.laps import load_laps
+from src.ingestion.pit_stops import load_pit_stops
+from src.ingestion.race_control import load_race_control
 from src.ingestion.race_info import build_race_table
 from src.ingestion.session import load_race_list, load_race_session
 from src.ingestion.storage import table_exists, write_table
 from src.ingestion.telemetry import load_telemetry
 from src.ingestion.tyres import load_tyres
+from src.ingestion.weather import load_weather
 
-TABLES = ["races", "laps", "tyres", "telemetry"]
+TABLES = ["races", "laps", "tyres", "telemetry", "weather", "race_control", "pit_stops"]
 
 log = logging.getLogger("overtake.ingestion")
 
 
 def ingest_race(race: dict) -> dict[str, int]:
-    """Load one race session and write all Prediction Lane tables.
+    """Load one race session and write all Prediction & Decision lane tables.
 
     Returns row counts per table, for the run summary.
     """
@@ -40,6 +43,9 @@ def ingest_race(race: dict) -> dict[str, int]:
         "laps": load_laps(session, race_id),
         "tyres": load_tyres(session, race_id),
         "telemetry": load_telemetry(session, race_id),
+        "weather": load_weather(session, race_id),
+        "race_control": load_race_control(session, race_id),
+        "pit_stops": load_pit_stops(session, race_id),
     }
     for name, df in tables.items():
         write_table(df, name, race_id)

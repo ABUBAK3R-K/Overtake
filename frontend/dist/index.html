@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OVERTAKE — Formula 1 AI Race Strategy & Replay Engine</title>
+  <meta name="description" content="AI-powered Formula 1 race strategy optimization, real-time replay, tyre degradation modeling, and Monte Carlo forward simulation.">
+  
+  <!-- Google Fonts: Outfit & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  
+  <!-- Plotly.js for interactive high-performance charts -->
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="dark-theme">
+  <!-- Top Navigation Bar -->
+  <header class="navbar">
+    <div class="brand-section">
+      <div class="logo-icon">
+        <span class="f1-stripe"></span>
+        <span class="logo-text">OVERTAKE</span>
+      </div>
+      <span class="tagline">AI RACE STRATEGY COMMAND</span>
+    </div>
+
+    <!-- Race Selection & Status Badges -->
+    <div class="race-selector-container">
+      <label for="race-select" class="selector-label">GRAND PRIX</label>
+      <select id="race-select" class="custom-select">
+        <option value="2023_bahrain">2023 Bahrain GP (Sakhir)</option>
+        <option value="2023_australia">2023 Australian GP (Albert Park)</option>
+        <option value="2023_monaco">2023 Monaco GP (Monte Carlo)</option>
+        <option value="2023_spain">2023 Spanish GP (Barcelona)</option>
+        <option value="2023_britain">2023 British GP (Silverstone)</option>
+        <option value="2023_netherlands">2023 Dutch GP (Zandvoort)</option>
+        <option value="2023_italy">2023 Italian GP (Monza)</option>
+        <option value="2023_singapore">2023 Singapore GP (Marina Bay)</option>
+      </select>
+    </div>
+
+    <!-- Focus Driver Selector -->
+    <div class="driver-selector-container">
+      <label for="driver-select" class="selector-label">TARGET DRIVER</label>
+      <select id="driver-select" class="custom-select">
+        <option value="VER">Max Verstappen (VER)</option>
+        <option value="PER">Sergio Perez (PER)</option>
+        <option value="ALO">Fernando Alonso (ALO)</option>
+        <option value="HAM">Lewis Hamilton (HAM)</option>
+        <option value="RUS">George Russell (RUS)</option>
+        <option value="SAI">Carlos Sainz (SAI)</option>
+        <option value="LEC">Charles Leclerc (LEC)</option>
+        <option value="NOR">Lando Norris (NOR)</option>
+        <option value="PIA">Oscar Piastri (PIA)</option>
+      </select>
+    </div>
+
+    <!-- Live Status Indicators -->
+    <div class="status-strip">
+      <div id="track-status-pill" class="status-pill green">
+        <span class="pulse-dot"></span>
+        <span id="track-status-text">TRACK CLEAR</span>
+      </div>
+      <div class="weather-pill">
+        <span class="icon">🌡️</span>
+        <span id="track-temp-text">32°C</span>
+      </div>
+      <div class="weather-pill">
+        <span class="icon">⛅</span>
+        <span id="weather-cond-text">DRY</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- View Navigation Tabs -->
+  <nav class="view-tabs" role="tablist">
+    <button class="tab-btn active" data-view="race" id="tab-race">🏁 RACE REPLAY</button>
+    <button class="tab-btn" data-view="strategy" id="tab-strategy">🎯 STRATEGY OPTIMIZER</button>
+    <button class="tab-btn" data-view="simulation" id="tab-simulation">🎲 MONTE CARLO SIM</button>
+    <button class="tab-btn" data-view="tyre" id="tab-tyre">🏎️ TYRE DEGRADATION</button>
+    <button class="tab-btn" data-view="model" id="tab-model">🧠 MODEL BENCHMARKS</button>
+    <button class="tab-btn" data-view="backtest" id="tab-backtest">📊 CALENDAR BACKTEST</button>
+  </nav>
+
+  <!-- Lap Scrubber Bar (Global across views) -->
+  <div class="scrubber-container">
+    <div class="scrubber-controls">
+      <button id="btn-play-pause" class="btn-ctrl" title="Play/Pause Replay">▶</button>
+      <button id="btn-prev-lap" class="btn-ctrl" title="Previous Lap">⏮</button>
+      <div class="lap-display">
+        <span class="lap-label">LAP</span>
+        <span id="current-lap-num" class="lap-value">1</span>
+        <span class="lap-slash">/</span>
+        <span id="total-laps-num" class="lap-total">57</span>
+      </div>
+      <button id="btn-next-lap" class="btn-ctrl" title="Next Lap">⏭</button>
+      <input type="range" id="lap-slider" min="1" max="57" value="1" class="lap-range">
+      <div class="speed-selector">
+        <button class="speed-btn active" data-speed="1">1x</button>
+        <button class="speed-btn" data-speed="2">2x</button>
+        <button class="speed-btn" data-speed="5">5x</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main View Container -->
+  <main class="main-content">
+    
+    <!-- VIEW 1: RACE REPLAY VIEW -->
+    <section id="view-race" class="view-panel active">
+      <div class="grid-layout-race">
+        <!-- Live Timing & Leaderboard Panel -->
+        <div class="panel leaderboard-panel">
+          <div class="panel-header">
+            <h3>LIVE LEADERBOARD</h3>
+            <span class="badge" id="field-count-badge">20 DRIVERS</span>
+          </div>
+          <div class="table-responsive">
+            <table class="telemetry-table" id="leaderboard-table">
+              <thead>
+                <tr>
+                  <th>POS</th>
+                  <th>DRIVER</th>
+                  <th>TYRE</th>
+                  <th>AGE</th>
+                  <th>GAP</th>
+                  <th>LAST LAP</th>
+                  <th>STOPS</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboard-body">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Race Telemetry & Gap Delta Chart -->
+        <div class="panel telemetry-panel">
+          <div class="panel-header">
+            <h3>INTERVAL TO LEADER (GAP DELTA)</h3>
+            <span class="badge live">REAL-TIME</span>
+          </div>
+          <div id="gap-chart" class="chart-box"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 2: STRATEGY OPTIMIZER VIEW -->
+    <section id="view-strategy" class="view-panel">
+      <div class="strategy-grid">
+        <!-- Primary AI Call Card -->
+        <div class="panel call-panel">
+          <div class="panel-header">
+            <h3>STRATEGY ENGINEER RECOMMENDATION</h3>
+            <span class="confidence-badge" id="strategy-confidence">CONFIDENCE: 88%</span>
+          </div>
+          
+          <div class="recommendation-hero">
+            <div class="hero-action-badge" id="rec-action-badge">BOX THIS LAP</div>
+            <div class="hero-compound-badge hard" id="rec-tyre-badge">FOR HARD</div>
+            <div class="hero-metrics">
+              <div class="metric-card">
+                <span class="label">EXPECTED GAIN</span>
+                <span class="val positive" id="rec-gain-val">+1.4 POS</span>
+              </div>
+              <div class="metric-card">
+                <span class="label">EXPECTED FINISH</span>
+                <span class="val" id="rec-exp-pos">P 2.1</span>
+              </div>
+              <div class="metric-card">
+                <span class="label">PODIUM PROB</span>
+                <span class="val" id="rec-podium-prob">84.2%</span>
+              </div>
+            </div>
+            <div class="reasoning-box">
+              <span class="reasoning-title">TACTICAL RATIONALE:</span>
+              <p id="rec-reasoning-text">Pitting immediately provides a +1.8s/lap pace offset on fresh Hard tyres, undercutting cars ahead before tyre cliff degradation accelerates.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Evaluated Candidates Table -->
+        <div class="panel candidates-panel">
+          <div class="panel-header">
+            <h3>EVALUATED STRATEGY CANDIDATES (MONTE CARLO RANKED)</h3>
+          </div>
+          <div class="table-responsive">
+            <table class="telemetry-table" id="candidates-table">
+              <thead>
+                <tr>
+                  <th>STRATEGY OPTION</th>
+                  <th>PIT LAP</th>
+                  <th>COMPOUND</th>
+                  <th>EXP. FINISH</th>
+                  <th>WIN %</th>
+                  <th>PODIUM %</th>
+                  <th>STATUS</th>
+                </tr>
+              </thead>
+              <tbody id="candidates-body">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 3: MONTE CARLO SIMULATION VIEW -->
+    <section id="view-simulation" class="view-panel">
+      <div class="simulation-grid">
+        <!-- Monte Carlo Finishing Position Histogram -->
+        <div class="panel sim-chart-panel">
+          <div class="panel-header">
+            <h3>MONTE CARLO FINISHING POSITION PROBABILITY DISTRIBUTION</h3>
+            <span class="badge" id="sim-count-badge">500 SIMULATIONS</span>
+          </div>
+          <div id="sim-distribution-chart" class="chart-box"></div>
+        </div>
+
+        <!-- Custom Strategy Sandbox Panel -->
+        <div class="panel sandbox-panel">
+          <div class="panel-header">
+            <h3>CUSTOM STRATEGY SANDBOX</h3>
+          </div>
+          <div class="sandbox-controls">
+            <div class="form-group">
+              <label for="custom-pit-lap">SIMULATE PIT ON LAP:</label>
+              <input type="number" id="custom-pit-lap" min="1" max="57" value="25" class="input-ctrl">
+            </div>
+            <div class="form-group">
+              <label for="custom-compound">TARGET COMPOUND:</label>
+              <select id="custom-compound" class="input-ctrl">
+                <option value="HARD">HARD (White)</option>
+                <option value="MEDIUM">MEDIUM (Yellow)</option>
+                <option value="SOFT">SOFT (Red)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="custom-sims">ITERATIONS:</label>
+              <select id="custom-sims" class="input-ctrl">
+                <option value="200">200 Sims (Fast)</option>
+                <option value="500" selected>500 Sims (Standard)</option>
+                <option value="1000">1000 Sims (High Accuracy)</option>
+              </select>
+            </div>
+            <button id="btn-run-custom-sim" class="btn-action">RUN MONTE CARLO SIM</button>
+
+            <!-- Percentile Outcomes Card -->
+            <div class="percentile-summary">
+              <h4>PERCENTILE SPREAD</h4>
+              <div class="percentile-row">
+                <span class="p-label">P10 (Optimistic):</span>
+                <span class="p-val" id="p10-val">P1</span>
+              </div>
+              <div class="percentile-row">
+                <span class="p-label">P50 (Median):</span>
+                <span class="p-val" id="p50-val">P2</span>
+              </div>
+              <div class="percentile-row">
+                <span class="p-label">P90 (Pessimistic):</span>
+                <span class="p-val" id="p90-val">P4</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 4: TYRE DEGRADATION VIEW -->
+    <section id="view-tyre" class="view-panel">
+      <div class="tyre-grid">
+        <div class="panel degradation-chart-panel">
+          <div class="panel-header">
+            <h3>PREDICTED TYRE WEAR CURVES (PACE LOSS BY AGE)</h3>
+            <span class="badge" id="tyre-circuit-badge">SAKHIR · TRACK 32°C</span>
+          </div>
+          <div id="tyre-deg-chart" class="chart-box"></div>
+        </div>
+
+        <div class="panel tyre-summary-panel">
+          <div class="panel-header">
+            <h3>CURRENT TYRE STATE</h3>
+          </div>
+          <div class="tyre-state-card">
+            <div class="compound-icon-large" id="current-compound-pill">MEDIUM</div>
+            <div class="tyre-stat-row">
+              <span>CURRENT AGE:</span>
+              <strong id="tyre-age-display">18 Laps</strong>
+            </div>
+            <div class="tyre-stat-row">
+              <span>CURRENT PACE LOSS:</span>
+              <strong id="tyre-loss-display">+0.94 s/lap</strong>
+            </div>
+            <div class="tyre-stat-row">
+              <span>ESTIMATED CLIFF:</span>
+              <strong id="tyre-cliff-display">Lap 26 (8 Laps remaining)</strong>
+            </div>
+            <div class="tyre-health-bar-container">
+              <label>TYRE LIFE REMAINING:</label>
+              <div class="health-bar-bg">
+                <div class="health-bar-fill" id="tyre-health-fill" style="width: 55%;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 5: MODEL BENCHMARKS VIEW -->
+    <section id="view-model" class="view-panel">
+      <div class="model-grid">
+        <div class="panel model-card">
+          <div class="panel-header">
+            <h3>TYRE DEGRADATION MODEL (XGBOOST)</h3>
+            <span class="badge">HELD-OUT EVAL</span>
+          </div>
+          <p class="model-desc">Monotone piecewise XGBoost regressor trained on 7,077 clean dry laps, isolating tyre degradation from fuel burn-off and driver pace offsets.</p>
+          <div class="metrics-grid">
+            <div class="metric-tile">
+              <span class="m-val">0.17 s</span>
+              <span class="m-label">Held-out Stint MAE</span>
+            </div>
+            <div class="metric-tile">
+              <span class="m-val">0.48 s</span>
+              <span class="m-label">Held-out Race MAE</span>
+            </div>
+            <div class="metric-tile">
+              <span class="m-val">0.44 s</span>
+              <span class="m-label">Baseline Error</span>
+            </div>
+            <div class="metric-tile">
+              <span class="m-val">&lt;0.5 µs</span>
+              <span class="m-label">Inference Latency</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel model-card">
+          <div class="panel-header">
+            <h3>LAP-TIME MULTI-HORIZON MODEL (XGBOOST)</h3>
+            <span class="badge">LEAKAGE-SAFE</span>
+          </div>
+          <p class="model-desc">Predicts delta to reference pace over horizons 1–30 laps based on driver rolling pace, traffic intervals, tyre life, and track conditions.</p>
+          <div class="metrics-grid">
+            <div class="metric-tile">
+              <span class="m-val">0.91 s</span>
+              <span class="m-label">Next-Lap Held-out MAE</span>
+            </div>
+            <div class="metric-tile">
+              <span class="m-val">1.53 s</span>
+              <span class="m-label">All-Horizon MAE (1-30 Laps)</span>
+            </div>
+            <div class="metric-tile">
+              <span class="m-val">1.97 s</span>
+              <span class="m-label">Baseline Multi-Lap MAE</span>
+            </div>
+            <div class="metric-tile">
+              <span class="m-val">40 ms</span>
+              <span class="m-label">Batched Sim Step (500x20)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 6: BACKTESTING & EVALUATION VIEW -->
+    <section id="view-backtest" class="view-panel">
+      <div class="backtest-grid">
+        <div class="panel backtest-summary-card">
+          <div class="panel-header">
+            <h3>2023 SEASON STRATEGY AUDIT SUMMARY</h3>
+            <span class="badge live">CALIBRATED</span>
+          </div>
+          <div class="hero-metrics">
+            <div class="metric-card">
+              <span class="label">STRATEGIES IMPROVED</span>
+              <span class="val positive" id="bt-improved-count">4 / 6</span>
+            </div>
+            <div class="metric-card">
+              <span class="label">SUCCESS / MATCH RATE</span>
+              <span class="val" id="bt-success-rate">100.0%</span>
+            </div>
+            <div class="metric-card">
+              <span class="label">AVG POSITION DELTA</span>
+              <span class="val positive" id="bt-avg-delta">+0.8 POS</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel backtest-table-card">
+          <div class="panel-header">
+            <h3>HISTORICAL DECISION POINT AUDIT</h3>
+          </div>
+          <div class="table-responsive">
+            <table class="telemetry-table" id="backtest-table">
+              <thead>
+                <tr>
+                  <th>GRAND PRIX</th>
+                  <th>DRIVER</th>
+                  <th>LAP</th>
+                  <th>REAL TEAM CALL</th>
+                  <th>REAL FINISH</th>
+                  <th>OVERTAKE AI CALL</th>
+                  <th>AI EXP. POS</th>
+                  <th>VERDICT</th>
+                </tr>
+              </thead>
+              <tbody id="backtest-body">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

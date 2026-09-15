@@ -1,0 +1,220 @@
+"""FastAPI Backend Server for Overtake (Design.md Section 6.9).
+
+Exposes REST APIs for Race Replay, Tyre Degradation, Lap Prediction,
+Monte Carlo Simulation, Strategy Optimization, and Backtesting.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any, Optional
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from src.evaluation.backtest import (
+    HISTORICAL_BENCHMARKS,
+    backtest_decision_point,
+    run_full_backtest,
+    summarize_backtest,
+)
+from src.ingestion.session import load_race_list
+from src.ingestion.storage import connect
+from src.models.lap_time import predict_lap_time
+from src.models.tyre import predict_tyre_degradation
+from src.simulation.monte_carlo import run_monte_carlo
+from src.simulation.replay import build_state_at_lap, get_race_metadata, run_replay
+from src.simulation.state import RaceState
+from src.strategy.optimizer import get_strategy_recommendation
+
+log = logging.getLogger("overtake.backend")
+
+app = FastAPI(
+    title="Overtake AI Race Strategy API",
+    description="Formula 1 AI-Powered Race Strategy & Simulation Backend",
+    version="1.0.0",
+)
+
+# Enable CORS for local dashboard development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/api/health")
+def health_check() -> dict[str, str]:
+    """Health check endpoint."""
+    return {"status": "ok", "service": "overtake-backend"}
+
+
+@app.get("/api/races")
+def get_races() -> list[dict[str, Any]]:
+    """Return list of configured/ingested races with metadata."""
+    try:
+        races = load_race_list()
+        con = connect()
+        tables = {row[0] for row in con.sql("SHOW TABLES").fetchall()}
+        if "races" in tables:
+            df = con.sql("SELECT * FROM races").df()
+            if not df.empty:
+                return df.to_dict(orient="records")
+        return races
+    except Exception as e:
+        log.exception("Error loading races: %s", e)
+        return load_race_list()
+
+
+@app.get("/api/replay/{race_id}/{lap}")
+def get_replay_lap(race_id: str, lap: int) -> dict[str, Any]:
+    """Return full RaceState at the specified lap."""
+    try:
+        state = build_state_at_lap(race_id, lap)
+        return state.to_dict()
+    except Exception as e:
+        log.exception("Error loading replay for %s lap %d: %s", race_id, lap, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tyre/{race_id}/{driver}/{lap}")
+def get_tyre_prediction(
+    race_id: str,
+    driver: str,
+    lap: int,
+    horizon: int = Query(default=30, ge=1, le=60),
+) -> dict[str, Any]:
+    """Return tyre degradation curves and wear prediction for the driver."""
+    try:
+        state = build_state_at_lap(race_id, lap)
+        current_comp, current_age = state.tyres.get(driver, ("MEDIUM", 1))
+        circuit = state.circuit
+        track_temp = state.weather.get("track_temp", 30.0)
+
+        # Generate wear curve across ages 0 to 40 for Soft, Medium, Hard
+        curves = {}
+        for comp in ["SOFT", "MEDIUM", "HARD"]:
+            curve = []
+            for age in range(0, 41):
+                try:
+                    wear = predict_tyre_degradation(comp, age, circuit, track_temp)
+                except Exception:
+                    wear = age * (0.07 if comp == "SOFT" else (0.05 if comp == "MEDIUM" else 0.035))
+                curve.append({"age": age, "pace_loss_seconds": round(wear, 3)})
+            curves[comp] = curve
+
+        current_loss = 0.0
+        try:
+            current_loss = predict_tyre_degradation(current_comp, current_age, circuit, track_temp)
+        except Exception:
+            current_loss = current_age * 0.05
+
+        return {
+            "race_id": race_id,
+            "driver": driver,
+            "current_lap": lap,
+            "circuit": circuit,
+            "compound": current_comp,
+            "current_age": current_age,
+            "track_temp": track_temp,
+            "current_pace_loss_seconds": round(current_loss, 3),
+            "degradation_curves": curves,
+        }
+    except Exception as e:
+        log.exception("Error generating tyre degradation for %s %s: %s", race_id, driver, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/lap-prediction/{race_id}/{driver}/{lap}")
+def get_lap_prediction(race_id: str, driver: str, lap: int) -> dict[str, Any]:
+    """Return predicted next lap time for driver given current race state."""
+    try:
+        state = build_state_at_lap(race_id, lap)
+        pred_time = predict_lap_time(state, driver)
+        base_time = state.last_lap_times.get(driver, pred_time)
+        return {
+            "race_id": race_id,
+            "driver": driver,
+            "current_lap": lap,
+            "predicted_next_lap_time": round(pred_time, 3),
+            "previous_lap_time": round(base_time, 3) if base_time else None,
+            "predicted_delta": round(pred_time - base_time, 3) if base_time else 0.0,
+            "safety_car": state.safety_car,
+        }
+    except Exception as e:
+        log.exception("Error predicting lap time for %s %s: %s", race_id, driver, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/strategy/{race_id}/{lap}")
+def get_strategy(
+    race_id: str,
+    lap: int,
+    driver: Optional[str] = Query(default=None),
+    sims: int = Query(default=200, ge=20, le=1000),
+) -> dict[str, Any]:
+    """Return strategy recommendation and evaluated candidates for a driver."""
+    try:
+        state = build_state_at_lap(race_id, lap)
+        target_driver = driver or ("VER" if "VER" in state.positions else next(iter(state.positions.keys()), "VER"))
+        rec = get_strategy_recommendation(state, target_driver=target_driver, n_sims=sims)
+        return rec
+    except Exception as e:
+        log.exception("Error generating strategy recommendation for %s lap %d: %s", race_id, lap, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/simulation/{race_id}/{lap}")
+def get_simulation(
+    race_id: str,
+    lap: int,
+    driver: Optional[str] = Query(default=None),
+    pit_lap: Optional[int] = Query(default=None),
+    compound: Optional[str] = Query(default=None),
+    sims: int = Query(default=300, ge=50, le=1000),
+) -> dict[str, Any]:
+    """Return Monte Carlo finishing probability distribution for custom or baseline strategy."""
+    try:
+        state = build_state_at_lap(race_id, lap)
+        target_driver = driver or ("VER" if "VER" in state.positions else next(iter(state.positions.keys()), "VER"))
+        
+        strategy = None
+        if pit_lap and compound:
+            strategy = {"pit_laps": [pit_lap], "compounds": [compound.upper()]}
+
+        res = run_monte_carlo(state, strategy=strategy, target_driver=target_driver, n_sims=sims)
+        return res
+    except Exception as e:
+        log.exception("Error running simulation for %s lap %d: %s", race_id, lap, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/backtest/{race_id}")
+def get_race_backtest(race_id: str) -> list[dict[str, Any]]:
+    """Return backtest benchmarks for a specific race."""
+    matching = [b for b in HISTORICAL_BENCHMARKS if b["race_id"] == race_id]
+    if not matching:
+        matching = [{"race_id": race_id, "driver": "VER", "decision_lap": 20, "actual_action": "BOX LAP 20", "actual_compound": "HARD", "actual_finish": 1, "circuit": "Circuit", "note": "Standard pit window"}]
+
+    results = []
+    for bm in matching:
+        res = backtest_decision_point(race_id=race_id, driver=bm["driver"], decision_lap=bm["decision_lap"], n_sims=80)
+        results.append(res)
+    return results
+
+
+@app.get("/api/backtest")
+def get_full_backtest() -> dict[str, Any]:
+    """Return full historical calendar backtesting summary."""
+    results = run_full_backtest(n_sims=60)
+    return summarize_backtest(results)
+
+
+# Serve static frontend if dist exists
+frontend_dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
