@@ -1,7 +1,15 @@
 """Safety-Car ("Ghost Car") Model & Gap Compression (Design.md Section 6.5).
 
-Provides empirical safety-car deployment probabilities by circuit and race phase,
-plus field compression ('bunching') when neutralised.
+Provides safety-car deployment probabilities by circuit and race phase, plus
+field compression ('bunching') when neutralised.
+
+The per-circuit base rates below are fixed priors, not computed from the
+ingested `race_control` table. With only one 2023 race per circuit, a
+directly-empirical per-circuit-per-phase rate would be a single race's outcome
+dressed up as a probability (e.g. a circuit with zero SC laps in its one
+ingested race would get a 0% rate) — noisier than a reasonable prior, not
+more honest. Treat these as an assumption to revisit if more races per
+circuit are ever ingested.
 """
 
 from __future__ import annotations
@@ -11,8 +19,9 @@ import numpy as np
 
 from src.simulation.state import RaceState
 
-# Baseline empirical per-lap safety car probabilities by circuit
-# (Synthesised from historical 2021-2023 FIA data)
+# Baseline per-lap safety car probability priors by circuit, by rough
+# reputation (Monaco/Singapore high, Barcelona/Sakhir low) rather than a
+# calculation over the ingested data — see module docstring.
 CIRCUIT_SC_BASE_RATES = {
     "Sakhir": 0.025,        # Bahrain: relatively low
     "Melbourne": 0.075,     # Albert Park: high SC frequency

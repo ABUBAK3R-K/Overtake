@@ -35,12 +35,16 @@ def test_backtest_decision_point_returns_schema():
 
 def test_summarize_backtest():
     mock_results = [
-        {"position_delta": 1.0, "verdict": "AI BEAT REAL STRATEGY (+1 POS)"},
+        {"position_delta": 1.0, "verdict": "AI ADVANTAGE (+1.0 POS)"},
         {"position_delta": 0.0, "verdict": "MATCHED REAL STRATEGY"},
         {"position_delta": 0.5, "verdict": "AI ADVANTAGE (+0.5 POS)"},
+        {"position_delta": -1.0, "verdict": "REAL STRATEGY BETTER (-1.0 POS)"},
+        {"verdict": "EVALUATION_FAILED", "error": "boom"},
     ]
     summary = summarize_backtest(mock_results)
-    assert summary["total_evaluations"] == 3
+    assert summary["total_evaluations"] == 5
+    assert summary["failed_evaluations"] == 1
     assert summary["strategies_improved"] == 2
     assert summary["strategies_matched"] == 1
-    assert summary["success_rate_pct"] == 100.0
+    assert summary["strategies_worse"] == 1
+    assert summary["success_rate_pct"] == 75.0

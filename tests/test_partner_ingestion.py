@@ -16,6 +16,7 @@ def mock_session() -> MagicMock:
     """Mock session with laps, weather, and race control data."""
     session = MagicMock()
     session.total_laps = 3
+    session.t0_date = pd.Timestamp("2023-01-01 00:00:00")
 
     # Laps
     session.laps = pd.DataFrame({
@@ -47,9 +48,10 @@ def mock_session() -> MagicMock:
         "Rainfall": [False, False, False],
     })
 
-    # Race control messages
+    # Race control messages (Time is an absolute UTC timestamp in real FastF1
+    # data, unlike laps.Time which is a session-relative Timedelta)
     session.race_control_messages = pd.DataFrame({
-        "Time": s([40, 182, 250], unit="s"),
+        "Time": session.t0_date + s([40, 182, 250], unit="s"),
         "Lap": [1.0, 2.0, 3.0],
         "Category": ["Flag", "SafetyCar", "Flag"],
         "Message": ["YELLOW FLAG IN SECTOR 2", "SAFETY CAR DEPLOYED", "TRACK CLEAR"],

@@ -94,45 +94,48 @@ def backtest_decision_point(
     if con is None:
         con = connect()
 
-    try:
-        state = build_state_at_lap(race_id, decision_lap, con=con)
-        rec = get_strategy_recommendation(state, target_driver=driver, n_sims=n_sims)
-        ai_action = rec["action"]
-        ai_tyre = rec["tyre"]
-        expected_pos = rec["expected_position"]
-        confidence = rec["confidence"]
-        reasoning = rec["reasoning"]
-    except Exception as e:
-        log.warning("Could not execute live replay for %s lap %d: %s", race_id, decision_lap, e)
-        ai_action = "BOX THIS LAP"
-        ai_tyre = "HARD"
-        expected_pos = 2.5
-        confidence = 0.85
-        reasoning = "Optimized tyre delta vs degraded runners."
-
     # Look up benchmark note if available
     bm = next(
         (b for b in HISTORICAL_BENCHMARKS if b["race_id"] == race_id and b["driver"] == driver and abs(b["decision_lap"] - decision_lap) <= 2),
         None,
     )
+    circuit = bm["circuit"] if bm else "Circuit"
+
+    try:
+        state = build_state_at_lap(race_id, decision_lap, con=con)
+        rec = get_strategy_recommendation(state, target_driver=driver, n_sims=n_sims)
+    except Exception as e:
+        log.exception("Backtest failed for %s driver %s lap %d", race_id, driver, decision_lap)
+        return {
+            "race_id": race_id,
+            "circuit": circuit,
+            "driver": driver,
+            "decision_lap": decision_lap,
+            "error": str(e),
+            "verdict": "EVALUATION_FAILED",
+        }
+
+    ai_action = rec["action"]
+    ai_tyre = rec["tyre"]
+    expected_pos = rec["expected_position"]
+    confidence = rec["confidence"]
+    reasoning = rec["reasoning"]
 
     actual_action = bm["actual_action"] if bm else "BOX LAP " + str(decision_lap + 1)
     actual_compound = bm["actual_compound"] if bm else ai_tyre
     actual_finish = bm["actual_finish"] if bm else int(round(expected_pos))
-    circuit = bm["circuit"] if bm else "Circuit"
 
-    # Outcome evaluation
-    pos_delta = actual_finish - expected_pos  # positive means AI expects better finish than actual
-    if "MONACO" in circuit.upper() and driver == "ALO":
-        # AI would never pit for slicks on a wet track
-        verdict = "AI BEAT REAL STRATEGY (+1 POS)"
-        pos_delta = 1.0
-    elif abs(pos_delta) < 0.6:
+    # Outcome evaluation: positive pos_delta means the AI's simulated expected
+    # finish beats what actually happened historically (lower position number
+    # = better finish). No special-casing by circuit/driver — every point is
+    # scored the same way, including cases where the real strategist won.
+    pos_delta = actual_finish - expected_pos
+    if abs(pos_delta) < 0.6:
         verdict = "MATCHED REAL STRATEGY"
     elif pos_delta >= 0.6:
         verdict = f"AI ADVANTAGE (+{pos_delta:.1f} POS)"
     else:
-        verdict = "PARALLEL STRATEGY"
+        verdict = f"REAL STRATEGY BETTER ({pos_delta:.1f} POS)"
 
     return {
         "race_id": race_id,
@@ -171,19 +174,30 @@ def run_full_backtest(con=None, n_sims: int = 100) -> list[dict[str, Any]]:
 
 
 def summarize_backtest(results: list[dict[str, Any]]) -> dict[str, Any]:
-    """Generate aggregate metrics across backtested races."""
-    if not results:
-        return {"total_races": 0, "win_rate": 0.0, "avg_gain": 0.0}
+    """Generate aggregate metrics across backtested races.
 
-    beats = sum(1 for r in results if "BEAT" in r["verdict"] or "ADVANTAGE" in r["verdict"])
-    matches = sum(1 for r in results if "MATCHED" in r["verdict"])
-    avg_gain = float(pd.Series([r["position_delta"] for r in results]).mean())
+    Failed evaluations (verdict "EVALUATION_FAILED") are reported, not hidden
+    or excluded from the count — PRD Section 9 requires an honest result, and
+    a suppressed failure would misrepresent the success rate.
+    """
+    if not results:
+        return {"total_evaluations": 0, "success_rate_pct": 0.0, "average_position_gain": 0.0}
+
+    failed = sum(1 for r in results if r["verdict"] == "EVALUATION_FAILED")
+    scored = [r for r in results if r["verdict"] != "EVALUATION_FAILED"]
+
+    beats = sum(1 for r in scored if "ADVANTAGE" in r["verdict"])
+    matches = sum(1 for r in scored if "MATCHED" in r["verdict"])
+    worse = sum(1 for r in scored if "REAL STRATEGY BETTER" in r["verdict"])
+    avg_gain = float(pd.Series([r["position_delta"] for r in scored]).mean()) if scored else None
 
     return {
         "total_evaluations": len(results),
+        "failed_evaluations": failed,
         "strategies_improved": beats,
         "strategies_matched": matches,
-        "success_rate_pct": round(((beats + matches) / len(results)) * 100, 1),
-        "average_position_gain": round(avg_gain, 2),
+        "strategies_worse": worse,
+        "success_rate_pct": round(((beats + matches) / len(scored)) * 100, 1) if scored else 0.0,
+        "average_position_gain": round(avg_gain, 2) if avg_gain is not None else None,
         "details": results,
     }

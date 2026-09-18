@@ -49,6 +49,19 @@ def _seconds(td: pd.Series) -> pd.Series:
     return td.dt.total_seconds()
 
 
+def _elapsed_seconds(ts: pd.Series, t0) -> pd.Series:
+    """Convert absolute UTC timestamps to seconds elapsed since session start.
+
+    `race_control_messages.Time` is an absolute UTC timestamp (FastF1
+    `to_datetime(entry['Utc'])`), unlike `laps.Time` which is already a
+    session-relative Timedelta. `session.t0_date` is the same reference point
+    FastF1 uses internally to convert between the two.
+    """
+    if ts is None:
+        return pd.Series(dtype=float)
+    return (ts - t0).dt.total_seconds()
+
+
 def build_race_control_table(session, race_id: str) -> pd.DataFrame:
     """Build the RaceControlEvent table from a loaded FastF1 session."""
     rc_messages = session.race_control_messages
@@ -58,7 +71,7 @@ def build_race_control_table(session, race_id: str) -> pd.DataFrame:
         return pd.DataFrame(columns=RACE_CONTROL_COLUMNS)
 
     df = rc_messages.copy()
-    time_s = _seconds(df["Time"])
+    time_s = _elapsed_seconds(df["Time"], session.t0_date)
 
     # Map message time to lap if Lap is missing/null in the message
     lap_times = []

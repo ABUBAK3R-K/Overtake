@@ -21,7 +21,7 @@ def get_race_metadata(race_id: str, con=None) -> dict[str, Any]:
     """Fetch race metadata for total_laps and circuit."""
     if con is None:
         con = connect()
-    df = con.sql(f"SELECT * FROM races WHERE race_id = '{race_id}'").df()
+    df = con.sql("SELECT * FROM races WHERE race_id = $race_id", params={"race_id": race_id}).df()
     if df.empty:
         return {"circuit": "Unknown", "total_laps": 57}
     row = df.iloc[0]
@@ -42,7 +42,7 @@ def build_state_at_lap(race_id: str, lap: int, con=None) -> RaceState:
     total_laps = meta["total_laps"]
 
     # Load laps strictly up to current lap
-    all_laps = con.sql(f"SELECT * FROM laps WHERE race_id = '{race_id}'").df()
+    all_laps = con.sql("SELECT * FROM laps WHERE race_id = $race_id", params={"race_id": race_id}).df()
     if all_laps.empty:
         return RaceState(
             race_id=race_id, lap=lap, positions={}, gaps={}, tyres={},
@@ -74,7 +74,7 @@ def build_state_at_lap(race_id: str, lap: int, con=None) -> RaceState:
             last_lap_times[driver] = float(lt)
 
     # Tyres
-    all_tyres = con.sql(f"SELECT * FROM tyres WHERE race_id = '{race_id}'").df()
+    all_tyres = con.sql("SELECT * FROM tyres WHERE race_id = $race_id", params={"race_id": race_id}).df()
     tyres = {}
     if not all_tyres.empty:
         tyres_as_of = as_of_lap(all_tyres, "lap_number", lap)
@@ -119,7 +119,7 @@ def build_state_at_lap(race_id: str, lap: int, con=None) -> RaceState:
     weather = {"track_temp": 30.0, "air_temp": 25.0, "is_wet": False}
     tables = {row[0] for row in con.sql("SHOW TABLES").fetchall()}
     if "weather" in tables:
-        w_df = con.sql(f"SELECT * FROM weather WHERE race_id = '{race_id}'").df()
+        w_df = con.sql("SELECT * FROM weather WHERE race_id = $race_id", params={"race_id": race_id}).df()
         if not w_df.empty:
             w_as_of = as_of_lap(w_df, "lap", lap)
             cur_w = w_as_of[w_as_of["lap"] == lap]
