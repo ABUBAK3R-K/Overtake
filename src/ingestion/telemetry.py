@@ -83,6 +83,9 @@ def build_telemetry_table(car_data: dict, laps: pd.DataFrame, race_id: str) -> p
     laps:     FastF1 `session.laps` (all drivers).
     """
     per_driver = []
+    if not car_data:
+        # Some sessions have no car telemetry at all in the source data.
+        return pd.DataFrame(columns=TELEMETRY_COLUMNS)
     for driver_number, driver_laps in laps.groupby("DriverNumber"):
         if driver_number not in car_data:
             continue  # no telemetry for this car; keep the rest of the race
@@ -93,6 +96,8 @@ def build_telemetry_table(car_data: dict, laps: pd.DataFrame, race_id: str) -> p
         summary["driver"] = driver_laps["Driver"].iloc[0]
         per_driver.append(summary)
 
+    if not per_driver:
+        return pd.DataFrame(columns=TELEMETRY_COLUMNS)
     table = pd.concat(per_driver, ignore_index=True)
     table["race_id"] = race_id
     table["lap_number"] = table["lap_number"].astype("int64")
@@ -101,4 +106,8 @@ def build_telemetry_table(car_data: dict, laps: pd.DataFrame, race_id: str) -> p
 
 def load_telemetry(session, race_id: str) -> pd.DataFrame:
     """Telemetry table for a loaded FastF1 race session."""
-    return build_telemetry_table(session.car_data, session.laps, race_id)
+    try:
+        car_data = session.car_data
+    except Exception:  # DataNotLoadedError etc.: source has no car telemetry
+        car_data = {}
+    return build_telemetry_table(car_data, session.laps, race_id)

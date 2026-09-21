@@ -59,6 +59,9 @@ def _elapsed_seconds(ts: pd.Series, t0) -> pd.Series:
     """
     if ts is None:
         return pd.Series(dtype=float)
+    if t0 is None:
+        # Source has no session start time (e.g. 2018 Bahrain): no elapsed time.
+        return pd.Series(float("nan"), index=ts.index)
     return (ts - t0).dt.total_seconds()
 
 

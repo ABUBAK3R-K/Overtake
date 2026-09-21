@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.ingestion.tyres import normalise_compounds
+
 PIT_STOP_COLUMNS = [
     "race_id", "driver", "lap", "stint", "pit_duration",
     "compound_before", "compound_after", "tyre_age_before", "fresh_tyre_after",
@@ -33,6 +35,8 @@ def build_pit_stops_table(laps: pd.DataFrame, race_id: str) -> pd.DataFrame:
         return pd.DataFrame(columns=PIT_STOP_COLUMNS)
 
     df = laps.sort_values(["Driver", "LapNumber"]).copy()
+    # Same relative SOFT/MEDIUM/HARD scale as the tyres table (matters for 2018).
+    df["Compound"] = normalise_compounds(df["Compound"])  # missing -> real null -> "UNKNOWN" below
     pit_in_mask = df["PitInTime"].notna()
 
     pit_laps = df[pit_in_mask].copy()
@@ -55,7 +59,7 @@ def build_pit_stops_table(laps: pd.DataFrame, race_id: str) -> pd.DataFrame:
             # Find next lap for compound_after and pit duration / out time
             compound_after = "UNKNOWN"
             fresh_after = True
-            pit_duration = 22.0  # default typical pit lane duration in seconds
+            pit_duration = float("nan")  # unknown unless the source gives pit-in/out times
 
             if idx + 1 < len(d_laps):
                 next_row = d_laps.iloc[idx + 1]

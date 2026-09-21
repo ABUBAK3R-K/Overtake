@@ -17,3 +17,7 @@ node_modules/
 
 # Research papers and documents
 *.pdf
+
+# Logs and outputs
+*.log
+*.out

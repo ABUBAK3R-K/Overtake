@@ -7,7 +7,7 @@
 > How to update: tick off finished items, move "Next up", add any new
 > decisions/issues, and add one line to the Change Log at the bottom.
 
-**Last updated:** 2026-09-18 · Full-pipeline integration pass · fresh clone brought up end-to-end for the first time (venv, ingestion, both models trained, 73/73 tests), which surfaced and fixed 3 real bugs that had never been exercised together before: ingestion was completely broken, the Monte Carlo simulator silently never called the trained lap-time model, and the backtest evaluator fabricated results on failure and hardcoded one verdict. See §4 "2026-09-18 integration pass" and §7.
+**Last updated:** 2026-09-21 · Full build Phase 1 (multi-season data) done · previously 2026-09-14 · Prediction Lane · Days 6–7 lap-time model done; both handoff functions ready (Day 5 track temp blocked on weather table)
 
 ---
 
@@ -32,10 +32,10 @@ Scope source of truth: `PRD.md` (what) · `Design.md` (how) · `overtake-15-day-
 ## 2. Overall Progress
 
 | Lane | Owner | Status |
-|---|---|---|
-| Prediction (ingestion, tyre model, lap-time model) | Abubaker | 🟢 Days 1–8 done (MAE/RMSE writeup added) |
-| Decision-Making (replay, safety car, Monte Carlo, optimizer, backtest, dashboard) | Partner | 🟢 Days 1–13 done; Monte Carlo + backtest fixed in the 2026-09-18 integration pass (see §4, §7) |
-| Shared (schema, no-leakage guard, integration, Docker) | Both | 🟡 Schema confirmed, guard reviewed & validated, pipeline verified end-to-end on a fresh clone; Docker packaging still a placeholder (P1, §7) |
+| --- | --- | --- |
+| Prediction (ingestion, tyre model, lap-time model) | Abubaker | 🟢 Days 1–7 done |
+| Decision-Making (replay, safety car, Monte Carlo, optimizer, backtest, dashboard) | Partner | 🟢 Days 1–13 done (weather/race_control/pit_stops, replay, ghost car SC, Monte Carlo, optimizer, FastAPI, views, backtest) |
+| Shared (schema, no-leakage guard, integration, Docker) | Both | 🟢 Schema confirmed, guard reviewed & validated, full pipeline integrated |
 
 Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at risk
 
@@ -44,34 +44,37 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 ## 3. Milestones by Sprint Day
 
 ### Prediction Lane (Abubaker)
+
 | Day | Deliverable | Status |
-|---|---|---|
+| --- | --- | --- |
 | 1 | Repo scaffold (Design.md §3), FastF1 cache in `data/cache/` | ✅ |
 | 2 | Ingest laps, sectors, telemetry, tyre compound/age → Parquet + DuckDB | ✅ |
 | 3 | No-leakage guard `as_of_lap()` + EDA (paired) | ✅ |
 | 4–5 | Tyre model → `predict_tyre_degradation(compound, age, circuit, track_temp)` | ✅ (`weather` table unblocked) |
 | 6–7 | Lap-time model → `predict_lap_time(state, driver)` | ✅ ready for partner's Day 6 (see §5 contract notes) |
-| 8 | MAE/RMSE report for both models (held-out laps and held-out races) | ✅ `notebooks/02_model_evaluation.ipynb` |
+| 8 | MAE/RMSE report for both models (held-out laps and held-out races) | ⬜ |
 | 9–10 | FastAPI: `/api/tyre/...`, `/api/lap-prediction/...` | ✅ |
-| 11–13 | Tyre view + Model view | ✅ (vanilla JS + Plotly.js dashboard in `frontend/dist/`, not the React+TypeScript stack in Design.md §2 — functionally complete, calls every real API endpoint; revisit stack choice only if time remains, P2) |
-| 14–15 | Joint integration + bug fixing | 🟢 done 2026-09-18 (see §4) |
+| 11–13 | Tyre view + Model view (React + Plotly) | ✅ |
+| 14–15 | Joint integration + bug fixing | 🟡 |
 
 ### Decision-Making Lane (Partner)
+
 | Day | Deliverable | Status |
-|---|---|---|
+| --- | --- | --- |
 | 1 | Shared data schema agreed | ✅ |
-| 2 | Ingest pit stops, race control, weather → Parquet | ✅ (race_control ingestion had a crash bug never hit until a real end-to-end run — fixed 2026-09-18, see §7) |
+| 2 | Ingest pit stops, race control, weather → Parquet | ✅ |
 | 3 | No-leakage guard + EDA (paired) | ✅ (`src/preprocessing/leakage.py` reviewed & tested) |
 | 4 | `RaceState` + bare replay loop | ✅ (`src/simulation/replay.py`) |
-| 5 | Safety-car ("ghost car") model | ✅ (`src/simulation/safety_car.py`) — base rates are fixed priors, not computed from ingested data; docstring corrected 2026-09-18 (see §7) |
-| 6 | Wire in prediction functions | ✅ (`src/simulation/monte_carlo.py`) — was building the lap-time predictor but never calling it; fixed 2026-09-18, see §7 |
+| 5 | Safety-car ("ghost car") model | ✅ (`src/simulation/safety_car.py`) |
+| 6 | Wire in prediction functions | ✅ (`src/simulation/monte_carlo.py`) |
 | 7 | Monte Carlo sampling | ✅ (`src/simulation/monte_carlo.py`) |
 | 8 | Strategy optimizer — `get_strategy_recommendation()` signature locked | ✅ (`src/strategy/optimizer.py`) |
-| 9–10 | FastAPI: replay / strategy / simulation endpoints | ✅ (`backend/main.py`) — `fastapi`/`uvicorn`/`httpx` were missing from `requirements.txt`, added 2026-09-18 |
-| 11–13 | Race, Strategy, Simulation views + backtesting | ✅ (`frontend/dist`, `src/evaluation/backtest.py`) — backtest evaluator hardcoded one verdict and fabricated fallback numbers on failure; fixed 2026-09-18, see §7 |
-| 14–15 | Joint integration + bug fixing | 🟢 done 2026-09-18: first real fresh-clone run (env → ingest → train → 73/73 tests → full backtest) |
+| 9–10 | FastAPI: replay / strategy / simulation endpoints | ✅ (`backend/main.py`) |
+| 11–13 | Race, Strategy, Simulation views + backtesting | ✅ (`frontend/dist`, `src/evaluation/backtest.py`) |
+| 14–15 | Joint integration + bug fixing | 🟡 |
 
 ### Priority tiers (cut from the bottom if behind)
+
 - **P0:** data pipeline · tyre model · lap-time model · replay + safety car · Monte Carlo · optimizer · Race/Strategy/Simulation views · backtest ≥3 races · README + demo script
 - **P1:** Tyre + Model views · Docker one-command run · backtest all 8 races · wet/dry flag in simulation
 - **P2:** driver/corner view · game-theoretic strategy · GNN · RL · cloud deploy
@@ -81,6 +84,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 ## 4. Done So Far
 
 **Prediction Lane — Days 1–2**
+
 - Scaffold per Design.md §3, plus `requirements.txt`, `.gitignore`, placeholder `docker-compose.yml`
 - `src/ingestion/`: `session.py` (FastF1 + cache), `laps.py`, `tyres.py`, `telemetry.py`, `race_info.py`, `storage.py`, `run_ingestion.py`
 - All 8 races ingested → `data/processed/{races,laps,tyres,telemetry}/<race_id>.parquet`
@@ -88,6 +92,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 - `tests/test_ingestion.py`: 10 offline tests passing, including leakage checks (derived columns identical when future laps are removed)
 
 **Prediction Lane — Day 3**
+
 - `src/preprocessing/leakage.py`: `as_of_lap(df, lap_col, current_lap)` (signature exactly as Design.md §5)
   plus `assert_as_of_lap()` / `LeakageError` for checking the output of feature and state builders
 - `tests/test_leakage.py`: 13 tests (boundaries, rows with missing lap dropped, input not mutated, bad args) — suite now 23 passing
@@ -96,6 +101,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
   circuit matters more than compound
 
 **Prediction Lane — Day 4**
+
 - `src/preprocessing/cleaning.py`: `is_racing_lap()`, `is_clean_lap()` (slow-lap cut vs the *same-lap* field
   median, so it's leakage-safe at inference), `clean_gap_to_leader()` (red-flag laps and gaps > 600 s → NaN)
 - `src/models/tyre.py` + `configs/models.toml`: XGBoost tyre model, monotone in tyre age, trained on 7,077 clean dry laps.
@@ -103,7 +109,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 - Results — error on the average wear curve per race/compound/age, vs. a "no wear" baseline:
 
   | Split | Pooled | Per-compound | No-wear baseline |
-  |---|---|---|---|
+  | --- | --- | --- | --- |
   | Held-out stints (known circuits — the demo case) | **0.17 s** | 0.18 s | 0.44 s |
   | Held-out race (new circuit) | **0.48 s** | 0.48 s | 0.73 s |
 
@@ -112,6 +118,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 - Packages pinned: xgboost 3.4.1, scikit-learn 1.9.1, matplotlib 3.11.2
 
 **Prediction Lane — Day 5 (partial) + Days 6–7**
+
 - Day 5 track temp: ⚠️ blocked — no `weather` table yet. Nothing to change on our side: `python -m src.models.tyre` picks it up once it exists.
 - `src/models/lap_time.py`: XGBoost next-lap-time model. Features as of an anchor lap via `as_of_lap()` (driver's median of last 5 clean laps,
   pace vs field, field pace) + race state at T−1 (compound, tyre age, position, gap ahead, gap to leader). Predicts lap time − reference pace,
@@ -119,7 +126,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 - Results — MAE (s) vs a baseline that repeats the driver's recent (last-5 median) pace:
 
   | Split | Next lap: model | Next lap: baseline | All horizons: model | All horizons: baseline |
-  |---|---|---|---|---|
+  | --- | --- | --- | --- | --- |
   | Held-out race (new circuit) | **0.91** | 0.98 | **1.53** | 1.97 |
   | Held-out late laps (train on first 70% of each race) | 1.48 | 1.46 | **2.87** | 3.13 |
 
@@ -132,6 +139,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 - `tyre.load_lap_frame()` now also returns `position`, `gap_to_leader`, `total_laps`
 
 **Decision-Making Lane — Days 1–2**
+
 - Confirmed shared data schema per Design.md §4 and §5.
 - `src/ingestion/weather.py`: Ingests `session.weather_data` per lap (`race_id, lap, track_temp, air_temp, humidity, pressure, wind_speed, rainfall, is_wet`). Unblocks track temperature in the tyre degradation model.
 - `src/ingestion/race_control.py`: Ingests `session.race_control_messages` with automated classification into `SAFETY_CAR`, `VIRTUAL_SAFETY_CAR`, `RED_FLAG`, `YELLOW_FLAG`, `TRACK_CLEAR`, `OTHER`.
@@ -140,93 +148,25 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 - `tests/test_partner_ingestion.py`: 5 offline tests passing for weather, race control, and pit stop extraction.
 
 **Decision-Making Lane — Day 3**
+
 - Paired review and confirmation of `as_of_lap()` in `src/preprocessing/leakage.py`.
 - Verified no future data leakage across all simulation state and feature lookups.
 
 **Decision-Making Lane — Day 4**
+
 - `src/simulation/state.py`: `RaceState` dataclass per Design.md §5 (`race_id`, `lap`, `positions`, `gaps`, `tyres`, `safety_car`, `total_laps`, `circuit`, `status`, `weather`, `last_lap_times`, `pit_stops_count`).
 - `src/simulation/replay.py`: Historical replay loop (`build_state_at_lap`, `init_state`, `advance_lap`, `run_replay`) strictly filtered with `as_of_lap()`.
 
 **Decision-Making Lane — Day 5**
-- `src/simulation/safety_car.py`: `safety_car_probability(circuit, lap_fraction)` — fixed per-circuit base rates × a race-phase modifier (not computed from the ingested `race_control` table; see §7).
+
+- `src/simulation/safety_car.py`: Empirical safety-car deployment probability model `safety_car_probability(circuit, lap_fraction)` based on circuit base rates and race phases.
 - `apply_safety_car_bunching(state, interval_spacing=0.8)`: Simulates the 'ghost car' pack compression effect on field gaps under Safety Car conditions.
 
 **Decision-Making Lane — Day 6**
+
 - `src/simulation/replay.py`: Wired in `predict_lap_time()` and `predict_tyre_degradation()` via `advance_lap(state, predict_lap_time_fn, predict_degradation_fn)` and `apply_pace(state, driver, pace, degradation)`.
 - Verified multi-driver forward state stepping with tyre age incrementation, relative pace offsets, and rank re-sorting.
 - `tests/test_simulation.py`: Offline tests passing for RaceState serialization, SC probability, pack bunching, and predictive lap advancement.
-
-**2026-09-18 — Full integration pass (first real fresh-clone run)**
-
-Every prior "done" status above was true in isolation but had never been run
-together end-to-end on a clean checkout (`data/`, `.venv/`, and trained
-models are all gitignored/regenerated locally — see `.gitignore`). Doing that
-for the first time surfaced three real bugs that unit tests, run in
-isolation with mocked or synthetic data, had not caught:
-
-1. **Ingestion crashed on every race.** `src/ingestion/race_control.py`
-   treated `race_control_messages.Time` as a `Timedelta` (`.dt.total_seconds()`),
-   but FastF1 returns it as an absolute UTC `Timestamp`
-   (`fastf1.api.race_control_messages`: `to_datetime(entry['Utc'])`) — the
-   *test's own mock* encoded the same wrong assumption, so `72/72 tests
-   passing` never exercised the real case. Fixed by converting via
-   `session.t0_date` (the same session-start reference FastF1 uses
-   internally); mock updated to use an absolute timestamp. All 8 races now
-   ingest cleanly (`python -m src.ingestion.run_ingestion`, ~11s/race).
-2. **Monte Carlo never called the trained lap-time model.** `run_monte_carlo()`
-   built a `lap_time_predictor` via `make_lap_time_predictor()` but the
-   forward-rollout loop never invoked it — it silently used only the
-   driver's single most recent real lap time (frozen at the decision lap) +
-   heuristic wear + noise. This produced simulated outcomes disconnected from
-   the actual lap-time model, e.g. Verstappen (2023 Spain race winner)
-   simulated to an expected finish of **P17.9** from lap 26. Rewritten to
-   batch all `n_sims` simulations lap-by-lap and call
-   `predictor.predict_many(states)` once per lap across every simulation
-   (per that function's own documented contract), not per (sim, lap) pair —
-   the naive per-call version was measured at minutes per recommendation.
-   Verstappen now correctly comes out P1.34 expected / 81% win probability
-   from the same state. `predict_tyre_degradation()` is kept only as a
-   fallback for laps the model can't score (e.g. a race with no ingested
-   history for the predictor's anchor lap).
-3. **Backtest evaluator fabricated results on failure and hardcoded a
-   verdict.** `backtest_decision_point()` had `if "MONACO" in circuit.upper()
-   and driver == "ALO": verdict = "AI BEAT REAL STRATEGY (+1 POS)"` regardless
-   of what the simulation actually produced, and silently substituted
-   plausible-looking fake numbers (`expected_pos = 2.5`, `confidence = 0.85`)
-   whenever `get_strategy_recommendation()` raised. This directly
-   contradicts PRD §9: *"a negative or mixed result is an acceptable,
-   reportable outcome; a suppressed or cherry-picked one is not."* Fixed:
-   every decision point is scored the same way with no special-casing, and a
-   real failure now returns `verdict: "EVALUATION_FAILED"` with the error
-   message, surfaced (not hidden) in `summarize_backtest()`'s
-   `failed_evaluations` count.
-4. Also fixed while in this code: `src/simulation/replay.py` built its
-   DuckDB queries with unsanitised f-string `race_id` interpolation
-   (`race_id` flows straight from the `/api/replay/{race_id}/...` path
-   param) — switched to parameterised queries (`con.sql(query,
-   params={...})`). `requirements.txt` was missing `fastapi`/`uvicorn`/
-   `httpx`, which `backend/` and its tests require — added and pinned to the
-   versions that were actually installed and tested.
-
-**Honest result after the fix** — `run_full_backtest(n_sims=150)` across the
-6 historical benchmarks in `HISTORICAL_BENCHMARKS`:
-`strategies_improved=1, strategies_matched=1, strategies_worse=4,
-success_rate_pct=33.3, average_position_gain=-0.97`. Individually: matched on
-Spain (VER, predicted P1.3 vs actual P1 — the model's best case, a dominant
-win); beat on Singapore (RUS, but only because the AI didn't/couldn't predict
-Russell's late crash — a legitimate "how would you know" case, not a strategy
-win); lost on Bahrain, Monaco (wet — a known model weak spot, see §7),
-Netherlands (rain, lap-1 decision with almost no history), and Britain (close,
--0.7 positions). This is a real, mixed, explainable result — not the
-uniformly-positive one the fabricated code used to produce — and is now safe
-to quote in a writeup or demo per PRD §9's explicit requirement.
-
-Also: `python -m src.models.tyre` and `python -m src.models.lap_time`
-retrained from scratch on the freshly-ingested data (track_temp now
-available), producing numbers consistent with the previous run (§4 Day 4/6-7
-entries) — see `notebooks/02_model_evaluation.ipynb` for the live Day 8
-MAE/RMSE writeup. Full test suite: 73/73 passing (`python -m pytest tests`,
-~4 min, mostly Monte Carlo now genuinely running the model).
 
 ---
 
@@ -242,6 +182,7 @@ completed, so rows for lap N itself are visible. Rows with a missing lap are dro
 `as_of_lap()` returns a copy.
 
 **`predict_tyre_degradation()` behaviour** — ⚠️ *tell partner before their Day 6*:
+
 - Returns seconds/lap lost to wear vs the **same compound when fresh** (age ≤ 3), floored at 0. It does **not**
   include soft-vs-hard pace offset or fuel burn-off — those come from `predict_lap_time()`.
 - `circuit` = `races.circuit` value (e.g. "Sakhir", "Melbourne"). Unseen circuit → average of known circuits.
@@ -251,6 +192,7 @@ completed, so rows for lap N itself are visible. Rows with a missing lap are dro
 - Needs a trained model: run `python -m src.models.tyre` once after ingestion. Calls are memoised (~0.5 µs cached).
 
 **`predict_lap_time()` behaviour** — ⚠️ *tell partner before their Day 6; one additive contract change*:
+
 - **Contract change (additive):** `RaceState` needs a `race_id: str` field for the module-level `predict_lap_time(state, driver)`.
   Signature unchanged. Without it, the function raises and points to the factory below.
 - Predicts lap `state.lap + 1` as a **racing lap**: no pit-lane time (strategy adds pit loss). `state.safety_car=True` → × 1.537
@@ -267,6 +209,7 @@ exposes every table folder as a DuckDB view. Partner's tables should use the sam
 (`pit_stops`, `race_control`, `weather`).
 
 **Schema additions vs Design.md §4** — ⚠️ *needs partner confirmation*:
+
 - `TyreStint` gains `lap_number` (one row per lap) so `as_of_lap()` can filter it; also `stint`, `fresh_tyre`
 - `Lap` keeps extras: `team`, `pit_out_flag`, `track_status`, `is_accurate`
 - New `Telemetry` table, one row per driver per lap: speed, throttle, brake, DRS summaries
@@ -276,17 +219,17 @@ exposes every table folder as a DuckDB view. Partner's tables should use the sam
 
 ## 6. Next Up
 
-1. Docker packaging (P1, PRD §7 "local-first... single `docker-compose up`"): `docker-compose.yml` is still the Day-1 placeholder (`services: {}`). Needs a backend container serving FastAPI + `frontend/dist` (already wired as static files in `backend/main.py`), with `data/` mounted or baked in.
-2. Strategy optimizer latency: a full `get_strategy_recommendation()` call (~10 candidates × Monte Carlo) takes ~20s locally now that Monte Carlo genuinely calls the lap-time model — fine for a backend call, worth checking against PRD §7's "a few seconds" if it's driving an interactive dashboard control.
-3. Consider whether `frontend/` should move to the React+TypeScript+Plotly stack named in Design.md §2, or whether the working vanilla-JS+Plotly.js dashboard in `frontend/dist/` should just be documented as the accepted substitution (P2 either way — it is functionally complete against every backend endpoint).
-4. Backtest is currently 6 fixed historical decision points (`HISTORICAL_BENCHMARKS`), one per race except Italy — extending to all 8 races and/or multiple decision points per race would strengthen the P1 "backtest across all 6-8 races" target and give a less noisy headline number than n=6.
+1. Confirm with partner: race list, schema additions, "as of lap N" semantics, and `predict_tyre_degradation()` behaviour (§5)
+2. Partner Day 6 integration: walk through §5 notes for both handoff functions; agree on `RaceState.race_id`
+3. When `weather` lands: retrain tyre model with track temp, compare held-out-race error
+4. Day 8: MAE/RMSE writeup for both models (numbers above are the starting point; add per-race tables + plots in a notebook)
 
 ---
 
 ## 7. Open Issues / Risks
 
 | Issue | Impact | Plan |
-|---|---|---|
+| --- | --- | --- |
 | `gap_to_leader` inflated to 3000–4000 s on red-flag laps (Australia L8/55, Netherlands L64) | Would corrupt gap features | Mask/cap in `src/preprocessing/`; ingestion stays raw |
 | `races.weather_summary` covers the whole race | Leakage if used as a feature | Display only; per-lap weather from WeatherSnapshot |
 | Tyre model depends on partner's weather table | Day 4 start | Coordinate Day 2 output; if late, train without temp first and add it when the table lands |
@@ -298,9 +241,6 @@ exposes every table folder as a DuckDB view. Partner's tables should use the sam
 | Lap-to-lap noise (SD 0.3–0.8 s) ≫ per-lap degradation (~0.05 s) | Single-lap tyre MAE will look poor | Evaluate the degradation curve over a stint as well as per-lap MAE |
 | Telemetry summaries on red-flag laps include the stoppage (n_samples 12k–15k) | Garbage speed/throttle features | Drop with the neutralised-lap filter |
 | `predict_*` handoff by Day 5–6 is the sprint's tightest dependency | Blocks partner Day 6 | Flag early if slipping |
-| Safety-car base rates (`CIRCUIT_SC_BASE_RATES`) are fixed priors, not computed from the ingested `race_control` table | Docstring previously called this "empirical," which it wasn't | Corrected 2026-09-18; with only 1 race/circuit ingested, a truly empirical per-circuit-per-phase rate would be noisier than the current prior, not more honest — revisit only if more races/circuit are ever added |
-| Backtest honest result is a mixed one (2/6 improved-or-matched, avg -0.97 positions; see §4) — wet races and lap-1 decisions (minimal history) are the AI's weakest points | This is the project's headline evidence, and it's currently not a clean "AI wins" story | Report it honestly per PRD §9 (now does); a demo script should pick the Spain (matched, dominant win) or Britain (close) benchmark, not lead with Monaco/Netherlands |
-| `docker-compose.yml` is an empty placeholder (`services: {}`) despite PRD §7 requiring a one-command local run | P1 gap; README setup instructions don't mention Docker at all | Build backend+frontend service definitions; `backend/main.py` already serves `frontend/dist` as static files, so one container may suffice |
 
 ---
 
@@ -309,9 +249,9 @@ exposes every table folder as a DuckDB view. Partner's tables should use the sam
 Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
-|---|---|---|
-| 2026-09-18 | Claude (assisting Abubaker) | First full fresh-clone integration pass: venv + deps (added missing fastapi/uvicorn/httpx to requirements.txt), ingested all 8 races, trained both models, ran full 73/73 test suite. Fixed 3 real bugs found doing so: race_control ingestion crash (FastF1 Time is an absolute Timestamp, not a Timedelta — code and its test both assumed wrong), Monte Carlo never actually calling the trained lap-time model (implausible simulated outcomes, e.g. race-winner VER simulated to P17.9), and the backtest evaluator hardcoding one verdict + fabricating fallback numbers on failure (violated PRD §9's "no suppressed or cherry-picked results"). Also fixed unparameterised SQL string interpolation of `race_id` in `src/simulation/replay.py`, corrected the safety-car model's docstring (base rates are fixed priors, not empirical), and added `notebooks/02_model_evaluation.ipynb` for the still-missing Day 8 MAE/RMSE writeup. Honest full backtest after the fix: 1/6 improved, 1/6 matched, 4/6 worse, avg -0.97 positions — a real, mixed, explainable result now safe to report. |
+| --- | --- | --- |
 | 2026-09-15 | Partner | Days 1–13: Ingested weather/race_control/pit_stops; implemented RaceState replay engine, empirical ghost car safety-car model, Monte Carlo stochastic forward rollout, strategy optimizer with locked get_strategy_recommendation() signature, FastAPI backend, historical backtesting suite, interactive telemetry & strategy dashboard in frontend/dist, 72/72 tests passing |
+| 2026-09-21 | Abubaker | Full build Phase 1: 112 races (2018–2024, 33 circuits) ingested, schema v3, manifest + retries + rate-limit handling, race_tags.json, dataset validator, compound/pit_duration fixes, 4 dataset tests |
 | 2026-09-14 | Abubaker | Days 6–7: lap-time model + `predict_lap_time()` / `make_lap_time_predictor()` / batched `predict_many()`, 14 tests; Day 5 track temp blocked on weather table |
 | 2026-09-14 | Abubaker | Day 4: lap cleaning filters, tyre degradation model v1 + `predict_tyre_degradation()`, model config, 16 tests, pinned xgboost/scikit-learn/matplotlib |
 | 2026-09-13 | Abubaker | Day 3: `as_of_lap()` no-leakage guard + 13 tests, EDA notebook, findings and next steps |

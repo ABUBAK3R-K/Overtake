@@ -149,3 +149,25 @@ def test_tables_round_trip_through_parquet_and_duckdb(fastf1_laps, tmp_path):
         "SELECT race_id, COUNT(*) AS n FROM laps GROUP BY race_id ORDER BY race_id"
     ).fetchall()
     assert counts == [("race_a", 6), ("race_b", 6)]
+
+
+def test_normalise_compounds_maps_2018_brand_names_to_relative_scale():
+    import pandas as pd
+    from src.ingestion.tyres import normalise_compounds
+    raw = pd.Series(["ULTRASOFT", "SUPERSOFT", "SOFT", None, "ULTRASOFT", "INTERMEDIATE"])
+    out = normalise_compounds(raw)
+    assert list(out.dropna()) == ["SOFT", "MEDIUM", "HARD", "SOFT", "INTERMEDIATE"]
+
+
+def test_normalise_compounds_leaves_modern_names_untouched():
+    import pandas as pd
+    from src.ingestion.tyres import normalise_compounds
+    raw = pd.Series(["SOFT", "HARD", "MEDIUM", "WET"])
+    assert list(normalise_compounds(raw)) == list(raw)
+
+
+def test_normalise_compounds_turns_stringly_missing_values_into_nulls():
+    import pandas as pd
+    from src.ingestion.tyres import normalise_compounds
+    out = normalise_compounds(pd.Series(["SOFT", "nan", "None", None, float("nan")], dtype=object))
+    assert out.isna().sum() == 4 and out.iloc[0] == "SOFT"
