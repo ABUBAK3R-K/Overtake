@@ -10,6 +10,12 @@
 # here rather than letting "auto" flip on noise.
 variant = "pooled"
 
+# 2026-09-21 (Phase 2): the served model is a RoutedTyreModel built from two
+# pooled XGBoosts: circuit-aware for circuits seen in training, and
+# circuit-agnostic (compound + age only) for unseen ones. Neither uses track
+# temperature. Evidence: configs/tyre_split.toml + data/models/tyre/test_report.json.
+# The hyperparameters below predate that split (chosen 2026-09-14 on 8 races).
+
 # Tyre ages <= this form the zero point: pace_loss is measured against the
 # same compound when it was this fresh. Out-laps are excluded, so age 1 alone
 # is too thin to anchor on.

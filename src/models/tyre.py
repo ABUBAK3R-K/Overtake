@@ -141,6 +141,12 @@ def build_training_frame(laps: pd.DataFrame, config: dict | None = None) -> pd.D
     ref_age, max_age = config["reference_max_age"], config["max_age"]
 
     rows = laps[is_clean_lap(laps) & laps["compound"].isin(DRY_COMPOUNDS)].copy()
+    # Some ingested laps (2022 Austria/Monaco, 2018 Azerbaijan) have no tyre
+    # age; without it a lap can't be placed on a wear curve.
+    no_age = rows["tyre_age_at_lap"].isna()
+    if no_age.any():
+        log.info("dropping %d clean dry laps with unknown tyre age", int(no_age.sum()))
+        rows = rows[~no_age]
 
     # Keep only race-compounds with enough laps, and enough fresh-tyre laps
     # to pin the zero point; otherwise wear for that compound is unidentified.
@@ -167,12 +173,17 @@ class TyreModel:
     params: dict = field(default_factory=dict)
     max_age: int = 40
     use_track_temp: bool = False
+    # Ablation switches (Phase 2): circuit is the feature most likely to hurt
+    # on unseen circuits; use_temp=False ignores track_temp even if ingested.
+    use_circuit: bool = True
+    use_temp: bool = True
+    use_sample_weight: bool = False              # weight rows by train_weight if present
     circuits: list[str] = field(default_factory=list)
     boosters: dict[str, xgb.XGBRegressor] = field(default_factory=dict)
 
     @property
     def feature_names(self) -> list[str]:
-        names = ["tyre_age", "circuit"]
+        names = ["tyre_age"] + (["circuit"] if self.use_circuit else [])
         if self.variant == "pooled":
             names.insert(0, "compound")
         if self.use_track_temp:
@@ -199,12 +210,14 @@ class TyreModel:
         )
 
     def fit(self, train: pd.DataFrame) -> "TyreModel":
-        self.use_track_temp = bool(train["track_temp"].notna().any())
+        self.use_track_temp = self.use_temp and bool(train["track_temp"].notna().any())
         self.circuits = sorted(train["circuit"].unique())
         groups = ({"all": train} if self.variant == "pooled"
                   else dict(iter(train.groupby("compound"))))
         self.boosters = {
-            key: self._new_booster().fit(self._features(g), g["pace_loss"])
+            key: self._new_booster().fit(
+                self._features(g), g["pace_loss"],
+                sample_weight=g["train_weight"] if self.use_sample_weight and "train_weight" in g else None)
             for key, g in groups.items()
         }
         return self
@@ -224,7 +237,8 @@ class TyreModel:
             raise ValueError(f"tyre model covers dry compounds {DRY_COMPOUNDS}, got {sorted(unknown)}")
 
         frame = frame.reset_index(drop=True)
-        unseen = ~frame["circuit"].isin(self.circuits)
+        unseen = (~frame["circuit"].isin(self.circuits) if self.use_circuit
+                  else np.zeros(len(frame), dtype=bool))
         out = np.full(len(frame), np.nan)
         if (~unseen).any():
             out[~unseen] = self._predict_known(frame[~unseen])
@@ -234,6 +248,22 @@ class TyreModel:
                 circuit=np.tile(self.circuits, len(rows)))
             out[unseen] = self._predict_known(expanded).reshape(len(rows), -1).mean(axis=1)
         return np.maximum(out, 0.0)
+
+    def shap_values(self, frame: pd.DataFrame) -> pd.DataFrame:
+        """Per-row SHAP contributions (seconds of pace loss) for each input
+        feature, plus `bias`; rows sum to the raw (pre-floor) prediction.
+
+        Uses XGBoost's exact TreeSHAP (pred_contribs), the same values the
+        `shap` package's TreeExplainer returns, without the extra dependency.
+        Pooled variant only. Circuits unseen in training have no meaningful
+        contribution here, so pass known circuits (or use_circuit=False).
+        """
+        if self.variant != "pooled":
+            raise ValueError("shap_values supports the pooled variant only")
+        X = self._features(frame.reset_index(drop=True))
+        contribs = self.boosters["all"].get_booster().predict(
+            xgb.DMatrix(X, enable_categorical=True), pred_contribs=True)
+        return pd.DataFrame(contribs, columns=[*X.columns, "bias"])
 
     def _predict_known(self, frame: pd.DataFrame) -> np.ndarray:
         frame = frame.reset_index(drop=True)
@@ -254,6 +284,7 @@ class TyreModel:
         meta = {
             "variant": self.variant, "params": self.params, "max_age": self.max_age,
             "use_track_temp": self.use_track_temp, "circuits": self.circuits,
+            "use_circuit": self.use_circuit, "use_temp": self.use_temp,
             "boosters": sorted(self.boosters), "metrics": metrics or {},
         }
         (directory / "meta.json").write_text(json.dumps(meta, indent=2))
@@ -267,7 +298,8 @@ class TyreModel:
             )
         meta = json.loads(meta_path.read_text())
         model = cls(variant=meta["variant"], params=meta["params"], max_age=meta["max_age"],
-                    use_track_temp=meta["use_track_temp"], circuits=meta["circuits"])
+                    use_track_temp=meta["use_track_temp"], circuits=meta["circuits"],
+                    use_circuit=meta.get("use_circuit", True), use_temp=meta.get("use_temp", True))
         for key in meta["boosters"]:
             booster = model._new_booster()
             booster.load_model(directory / f"booster_{key}.json")
@@ -275,10 +307,62 @@ class TyreModel:
         return model
 
 
+@dataclass
+class RoutedTyreModel:
+    """The served model (Phase 2 decision, see PROJECT_STATUS.md).
+
+    Circuits seen in training use `known` (circuit-aware, no track temp);
+    any other circuit uses `agnostic` (compound + age only). On the frozen
+    test set the circuit-aware model wins at seen circuits (curve MAE 0.30
+    vs 0.43 s) but loses at unseen ones (0.70 vs 0.63 s), and track temp
+    never helped, so each case gets the model that does best on it.
+    """
+    known: TyreModel
+    agnostic: TyreModel
+
+    @classmethod
+    def new(cls, params: dict, max_age: int) -> "RoutedTyreModel":
+        return cls(known=TyreModel("pooled", params, max_age, use_circuit=True, use_temp=False),
+                   agnostic=TyreModel("pooled", params, max_age, use_circuit=False, use_temp=False))
+
+    @property
+    def circuits(self) -> list[str]:
+        return self.known.circuits
+
+    def fit(self, train: pd.DataFrame) -> "RoutedTyreModel":
+        self.known.fit(train)
+        self.agnostic.fit(train)
+        return self
+
+    def predict_frame(self, frame: pd.DataFrame) -> np.ndarray:
+        frame = frame.reset_index(drop=True)
+        seen = frame["circuit"].isin(self.known.circuits).to_numpy()
+        out = np.full(len(frame), np.nan)
+        if seen.any():
+            out[seen] = self.known.predict_frame(frame[seen])
+        if (~seen).any():
+            out[~seen] = self.agnostic.predict_frame(frame[~seen])
+        return out
+
+    def save(self, directory: Path = MODEL_DIR, metrics: dict | None = None) -> None:
+        directory.mkdir(parents=True, exist_ok=True)
+        self.known.save(directory / "known", metrics)
+        self.agnostic.save(directory / "agnostic", metrics)
+        (directory / "routed.json").write_text(json.dumps({"kind": "routed"}))
+
+    @classmethod
+    def load(cls, directory: Path = MODEL_DIR) -> "RoutedTyreModel":
+        return cls(known=TyreModel.load(directory / "known"),
+                   agnostic=TyreModel.load(directory / "agnostic"))
+
+
 # --- Handoff function (Design.md Section 5) --------------------------------
 
 @lru_cache(maxsize=1)
-def _default_model() -> TyreModel:
+def _default_model() -> TyreModel | RoutedTyreModel:
+    """Routed model if one was trained, else a single legacy TyreModel."""
+    if (MODEL_DIR / "routed.json").exists():
+        return RoutedTyreModel.load(MODEL_DIR)
     return TyreModel.load(MODEL_DIR)
 
 
@@ -295,9 +379,10 @@ def predict_tyre_degradation(compound: str, age: int, circuit: str,
 
     compound:   SOFT / MEDIUM / HARD (case-insensitive). Wet compounds raise ValueError.
     age:        tyre age in laps (FastF1 TyreLife, as in the tyres table).
-    circuit:    `races.circuit`, e.g. "Sakhir". Unseen circuits still get a
-                prediction, from the model's circuit-agnostic branch.
-    track_temp: degrees C at this lap. Ignored if the model was trained without it.
+    circuit:    `races.circuit`, e.g. "Sakhir". Unseen circuits are routed to
+                a circuit-agnostic model (compound + age only).
+    track_temp: accepted for the Design.md �5 contract but ignored: it did not
+                improve held-out error, so the served model is trained without it.
 
     Results are memoised (temp rounded to 0.5 C), so calling this for every
     driver on every simulated lap is cheap after the first few thousand calls.
@@ -360,37 +445,21 @@ def summarize_predictions(preds: pd.DataFrame, min_laps_per_point: int = 5) -> d
 
 
 def main() -> int:
+    """Train the served RoutedTyreModel on every race and save it.
+
+    Evaluation lives in src/evaluation/tyre_eval.py and
+    scripts/run_tyre_eval.py (frozen held-out races and circuits); this only
+    produces the final model, which therefore has seen the test races.
+    """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     config = load_config()
 
     train = build_training_frame(load_lap_frame(), config)
-    log.info("training rows: %d across %d races; track_temp %s",
-             len(train), train["race_id"].nunique(),
-             "available" if train["track_temp"].notna().any() else "not ingested yet")
+    log.info("training rows: %d across %d races", len(train), train["race_id"].nunique())
 
-    results = {"leave_one_race_out": {}, "held_out_stints": {}}
-    for variant in ("pooled", "per_compound"):
-        preds = leave_one_race_out(train, variant, config)
-        results["leave_one_race_out"][variant] = summarize_predictions(preds)
-        per_race = {race_id: round(summarize_predictions(p)["curve_mae"], 3)
-                    for race_id, p in preds.groupby("race_id")}
-        results["held_out_stints"][variant] = summarize_predictions(
-            held_out_stints(train, variant, config))
-        for split in results:
-            log.info("%s %s: %s", variant, split,
-                     {k: round(v, 3) for k, v in results[split][variant].items()})
-        log.info("%s curve MAE by held-out race: %s", variant, per_race)
-
-    variant = config["variant"]
-    if variant == "auto":
-        loro = results["leave_one_race_out"]
-        variant = min(loro, key=lambda v: loro[v]["curve_mae"])
-    log.info("training final %s model on all races", variant)
-
-    model = TyreModel(variant=variant, params=config["xgboost"],
-                      max_age=config["max_age"]).fit(train)
-    model.save(MODEL_DIR, metrics={**results, "chosen": variant})
-    log.info("saved to %s", MODEL_DIR)
+    model = RoutedTyreModel.new(config["xgboost"], config["max_age"]).fit(train)
+    model.save(MODEL_DIR, metrics={"see": "data/models/tyre/test_report.json"})
+    log.info("saved routed model (%d known circuits) to %s", len(model.circuits), MODEL_DIR)
 
     curve = pd.DataFrame(
         {c: [predict_with(model, c, a, train) for a in (1, 5, 10, 20, 30)] for c in DRY_COMPOUNDS},
@@ -400,7 +469,7 @@ def main() -> int:
     return 0
 
 
-def predict_with(model: TyreModel, compound: str, age: int, train: pd.DataFrame) -> float:
+def predict_with(model: TyreModel | RoutedTyreModel, compound: str, age: int, train: pd.DataFrame) -> float:
     """Average prediction for one tyre state across all training circuits."""
     circuits = train[["circuit"]].drop_duplicates()
     frame = circuits.assign(compound=compound, tyre_age_at_lap=age, track_temp=np.nan)
