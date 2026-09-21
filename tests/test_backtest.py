@@ -7,6 +7,7 @@ from src.evaluation.backtest import (
     run_full_backtest,
     summarize_backtest,
 )
+from src.ingestion.storage import table_exists
 
 
 def test_historical_benchmarks_exist():
@@ -18,6 +19,7 @@ def test_historical_benchmarks_exist():
         assert "actual_action" in bm
 
 
+@pytest.mark.skipif(not table_exists("races", "2023_bahrain"), reason="2023_bahrain not ingested")
 def test_backtest_decision_point_returns_schema():
     res = backtest_decision_point(
         race_id="2023_bahrain",

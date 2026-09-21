@@ -45,3 +45,10 @@ def test_frontend_index_serving():
     assert response.status_code == 200
     assert "OVERTAKE" in response.text
 
+
+def test_lap_prediction_model_param_validation():
+    # Invalid model name should fail with 422 Unprocessable Entity
+    response = client.get("/api/lap-prediction/2023_bahrain/VER/15?model=invalid_model")
+    assert response.status_code == 422
+
+

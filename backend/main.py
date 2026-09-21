@@ -23,7 +23,9 @@ from src.evaluation.backtest import (
 from src.ingestion.session import load_race_list
 from src.ingestion.storage import connect
 from src.models.lap_time import predict_lap_time
+from src.models.lap_time_gnn import predict_lap_time_gnn
 from src.models.tyre import predict_tyre_degradation
+from src.preprocessing.graph import build_race_graph_from_state
 from src.simulation.monte_carlo import run_monte_carlo
 from src.simulation.replay import build_state_at_lap, get_race_metadata, run_replay
 from src.simulation.state import RaceState
@@ -130,21 +132,51 @@ def get_tyre_prediction(
 
 
 @app.get("/api/lap-prediction/{race_id}/{driver}/{lap}")
-def get_lap_prediction(race_id: str, driver: str, lap: int) -> dict[str, Any]:
+def get_lap_prediction(
+    race_id: str,
+    driver: str,
+    lap: int,
+    model: str = Query(default="baseline", pattern="^(baseline|gnn)$"),
+) -> dict[str, Any]:
     """Return predicted next lap time for driver given current race state."""
     try:
         state = build_state_at_lap(race_id, lap)
-        pred_time = predict_lap_time(state, driver)
+        interaction_context = None
+
+        if model == "gnn":
+            graph = build_race_graph_from_state(state)
+            gnn_preds = predict_lap_time_gnn(graph)
+            pred_time = gnn_preds.get(driver, predict_lap_time(state, driver))
+
+            # Extract driver-specific traffic & aerodynamic context
+            d_edges = [e for e in graph.edges if e[1] == driver]
+            wake_intensity = max([e[2].get("wake_effect", 0.0) for e in d_edges] + [0.0])
+            in_drs = any(e[2].get("drs_range", False) and e[2].get("direction") == "ahead_to_follower" for e in d_edges)
+            gap_ahead = min([e[2].get("gap", 999.0) for e in d_edges if e[2].get("direction") == "ahead_to_follower"] + [999.0])
+
+            interaction_context = {
+                "gap_ahead": round(gap_ahead, 3) if gap_ahead < 900.0 else None,
+                "in_drs_range": in_drs,
+                "wake_intensity": round(wake_intensity, 3),
+                "in_pack": len(d_edges) >= 2,
+            }
+        else:
+            pred_time = predict_lap_time(state, driver)
+
         base_time = state.last_lap_times.get(driver, pred_time)
-        return {
+        res = {
             "race_id": race_id,
             "driver": driver,
             "current_lap": lap,
+            "model": model,
             "predicted_next_lap_time": round(pred_time, 3),
             "previous_lap_time": round(base_time, 3) if base_time else None,
             "predicted_delta": round(pred_time - base_time, 3) if base_time else 0.0,
             "safety_car": state.safety_car,
         }
+        if interaction_context is not None:
+            res["interaction_context"] = interaction_context
+        return res
     except Exception as e:
         log.exception("Error predicting lap time for %s %s: %s", race_id, driver, e)
         raise HTTPException(status_code=500, detail=str(e))

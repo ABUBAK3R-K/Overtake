@@ -7,7 +7,7 @@
 > How to update: tick off finished items, move "Next up", add any new
 > decisions/issues, and add one line to the Change Log at the bottom.
 
-**Last updated:** 2026-09-21 · Full build Phase 2 (tyre model) done: routed served model, held-out evaluation · Phase 1 (multi-season data) done · previously 2026-09-14 · Prediction Lane · Days 6–7 lap-time model done; both handoff functions ready (Day 5 track temp blocked on weather table)
+**Last updated:** 2026-09-21 · Full build Phase 3 (FR-3 lap-time model) done: RaceGraph interaction structure, sequential GRU baseline, relational message-passing GNN model, multi-circuit & traffic-stratified evaluation harness, FastAPI ?model=baseline|gnn integration · Phase 2 (tyre model) done · Phase 1 (multi-season data) done
 
 ---
 
@@ -51,8 +51,8 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · ⚠️ blocked/at ris
 | 2 | Ingest laps, sectors, telemetry, tyre compound/age → Parquet + DuckDB | ✅ |
 | 3 | No-leakage guard `as_of_lap()` + EDA (paired) | ✅ |
 | 4–5 | Tyre model → `predict_tyre_degradation(compound, age, circuit, track_temp)` | ✅ (`weather` table unblocked) |
-| 6–7 | Lap-time model → `predict_lap_time(state, driver)` | ✅ ready for partner's Day 6 (see §5 contract notes) |
-| 8 | MAE/RMSE report for both models (held-out laps and held-out races) | ⬜ |
+| 6–7 | Lap-time model → `predict_lap_time(state, driver)` & GNN `predict_lap_time_gnn(graph)` | ✅ (XGBoost, GRU, and GNN models complete) |
+| 8 | MAE/RMSE report for both models (held-out laps and held-out races) | ✅ (tyre_eval.py & lap_time_eval.py on frozen split) |
 | 9–10 | FastAPI: `/api/tyre/...`, `/api/lap-prediction/...` | ✅ |
 | 11–13 | Tyre view + Model view (React + Plotly) | ✅ |
 | 14–15 | Joint integration + bug fixing | 🟡 |
@@ -250,6 +250,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-21 | Abubaker | Phase 3 (FR-3): Implement interaction-aware lap-time modeling with RaceGraph data structures, sequential GRU baseline, relational message-passing GNN model (predict_lap_time_gnn), multi-circuit & traffic-stratified evaluation harness (src/evaluation/lap_time_eval.py, scripts/run_lap_time_eval.py), and FastAPI endpoint update (?model=baseline\|gnn). 100 passing tests |
 | 2026-09-21 | Abubaker | Add frozen tyre evaluation split (configs/tyre_split.toml), ablation scripts, and project guidance (CLAUDE.md) |
 | 2026-09-21 | Abubaker | Phase 2 (in progress): frozen tyre split `configs/tyre_split.toml` (14 test races, 3 wet, Monaco/Monza/Baku held out in every era), `src/evaluation/tyre_eval.py` harness, Bayesian + mean-curve baselines, XGBoost ablations + SHAP, `scripts/run_tyre_eval.py`, fixed crash on laps with unknown tyre age. **Served model changed**: `RoutedTyreModel` (circuit-aware XGBoost for seen circuits, circuit-agnostic for unseen; `track_temp` ignored) trained on all 105 races; `predict_tyre_degradation` values shift for the simulation/optimizer/backtest. 9 new tests, 89 total pass |
 | 2026-09-21 | Abubaker | Update PRD and Design specifications for full build roadmap and architecture |

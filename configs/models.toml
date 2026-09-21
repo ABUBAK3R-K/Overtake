@@ -38,3 +38,28 @@ min_child_weight = 20
 subsample = 0.8
 colsample_bytree = 1.0
 random_state = 42
+
+[lap_time.xgboost]
+n_estimators = 400
+learning_rate = 0.05
+max_depth = 5
+min_child_weight = 20
+subsample = 0.8
+random_state = 42
+
+[lap_time.gru]
+hidden_dim = 64
+num_layers = 2
+dropout = 0.1
+learning_rate = 0.001
+epochs = 20
+
+[lap_time.gnn]
+node_dim = 64
+edge_dim = 32
+hidden_dim = 64
+num_layers = 2
+drs_threshold = 1.0
+wake_threshold = 2.5
+learning_rate = 0.001
+epochs = 20
