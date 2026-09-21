@@ -250,6 +250,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-21 | Abubaker | Add frozen tyre evaluation split (configs/tyre_split.toml), ablation scripts, and project guidance (CLAUDE.md) |
 | 2026-09-21 | Abubaker | Phase 2 (in progress): frozen tyre split `configs/tyre_split.toml` (14 test races, 3 wet, Monaco/Monza/Baku held out in every era), `src/evaluation/tyre_eval.py` harness, Bayesian + mean-curve baselines, XGBoost ablations + SHAP, `scripts/run_tyre_eval.py`, fixed crash on laps with unknown tyre age. **Served model changed**: `RoutedTyreModel` (circuit-aware XGBoost for seen circuits, circuit-agnostic for unseen; `track_temp` ignored) trained on all 105 races; `predict_tyre_degradation` values shift for the simulation/optimizer/backtest. 9 new tests, 89 total pass |
 | 2026-09-21 | Abubaker | Update PRD and Design specifications for full build roadmap and architecture |
 | 2026-09-21 | Abubaker | Dataset expansion & validation: 112 races (2018–2024, 33 circuits) config, race condition tags, dataset validation suite |

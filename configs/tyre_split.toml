@@ -1,0 +1,11 @@
+# Frozen tyre-model evaluation split (scripts/make_tyre_split.py, seed 2026).
+# Do NOT tune on these races or regenerate after seeing results.
+# Tuning uses leave-one-race/circuit-out inside the training set only.
+
+seed = 2026
+held_out_circuits = ["Monaco", "Monza", "Baku"]   # every 2022-2024 race here
+seen_circuit_races = ["2022_austria", "2022_miami", "2023_brazil", "2024_canada", "2024_japan"]   # single races; circuit stays in training
+test_races = ["2022_austria", "2022_azerbaijan", "2022_italy", "2022_miami", "2022_monaco", "2023_azerbaijan", "2023_brazil", "2023_italy", "2023_monaco", "2024_azerbaijan", "2024_canada", "2024_italy", "2024_japan", "2024_monaco"]
+wet_test_races = ["2022_monaco", "2023_monaco", "2024_canada"]
+
+# 14 test races = 20.6% of 68 2022-2024 races; 3 wet.
