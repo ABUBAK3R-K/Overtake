@@ -27,7 +27,7 @@ from src.models.lap_time_gnn import predict_lap_time_gnn
 from src.models.tyre import predict_tyre_degradation
 from src.preprocessing.graph import build_race_graph_from_state
 from src.simulation.monte_carlo import run_monte_carlo
-from src.simulation.replay import build_state_at_lap, get_race_metadata, run_replay
+from src.simulation.replay import ReplaySession, build_state_at_lap, get_race_metadata, run_replay
 from src.simulation.state import RaceState
 from src.strategy.optimizer import get_strategy_recommendation
 
@@ -72,11 +72,58 @@ def get_races() -> list[dict[str, Any]]:
         return load_race_list()
 
 
+_REPLAY_SESSIONS: dict[str, ReplaySession] = {}
+
+
+def get_replay_session(race_id: str) -> ReplaySession:
+    """Retrieve or initialize an in-memory ReplaySession for high-speed replay scrubbing."""
+    if race_id not in _REPLAY_SESSIONS:
+        _REPLAY_SESSIONS[race_id] = ReplaySession(race_id)
+    return _REPLAY_SESSIONS[race_id]
+
+
+@app.get("/api/replay/{race_id}/summary")
+def get_replay_summary(race_id: str) -> dict[str, Any]:
+    """Return race metadata, circuit, total laps, and available replay status."""
+    try:
+        session = get_replay_session(race_id)
+        return {
+            "race_id": race_id,
+            "circuit": session.circuit,
+            "total_laps": session.total_laps,
+            "has_laps": not session.laps_df.empty,
+            "total_drivers": int(session.laps_df["driver"].nunique()) if not session.laps_df.empty else 0,
+        }
+    except Exception as e:
+        log.exception("Error loading replay summary for %s: %s", race_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/replay/{race_id}/events/{lap}")
+def get_replay_events(race_id: str, lap: int) -> dict[str, Any]:
+    """Return chronological race control and pit stop timeline strictly up to lap."""
+    try:
+        session = get_replay_session(race_id)
+        state = session.seek(lap)
+        return {
+            "race_id": race_id,
+            "lap": lap,
+            "safety_car": state.safety_car,
+            "status": state.status,
+            "pit_stops": state.pit_stops_history,
+            "race_control": state.race_control_events,
+        }
+    except Exception as e:
+        log.exception("Error loading replay events for %s lap %d: %s", race_id, lap, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/replay/{race_id}/{lap}")
 def get_replay_lap(race_id: str, lap: int) -> dict[str, Any]:
     """Return full RaceState at the specified lap."""
     try:
-        state = build_state_at_lap(race_id, lap)
+        session = get_replay_session(race_id)
+        state = session.seek(lap)
         return state.to_dict()
     except Exception as e:
         log.exception("Error loading replay for %s lap %d: %s", race_id, lap, e)

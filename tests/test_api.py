@@ -52,3 +52,21 @@ def test_lap_prediction_model_param_validation():
     assert response.status_code == 422
 
 
+def test_replay_summary_and_events_endpoints():
+    response = client.get("/api/replay/2023_bahrain/summary")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["race_id"] == "2023_bahrain"
+    assert "total_laps" in data
+    assert "circuit" in data
+
+    response_events = client.get("/api/replay/2023_bahrain/events/15")
+    assert response_events.status_code == 200
+    events = response_events.json()
+    assert events["race_id"] == "2023_bahrain"
+    assert events["lap"] == 15
+    assert "pit_stops" in events
+    assert "race_control" in events
+
+
+

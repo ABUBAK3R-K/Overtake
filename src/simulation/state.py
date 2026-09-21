@@ -26,6 +26,11 @@ class RaceState:
         weather: Current weather details {'track_temp': float, 'air_temp': float, 'is_wet': bool}
         last_lap_times: Driver code -> last completed lap time in seconds
         pit_stops_count: Driver code -> total number of pit stops completed so far
+        intervals: Driver code -> gap to the car immediately ahead in seconds (0.0 for leader)
+        retired: Driver code -> retirement description/reason
+        fastest_lap: Overall fastest lap set up to this lap {'driver': str, 'lap': int, 'lap_time': float}
+        pit_stops_history: Chronological list of pit stops completed up to this lap
+        race_control_events: Chronological list of race control events up to this lap
     """
 
     race_id: str
@@ -40,6 +45,11 @@ class RaceState:
     weather: dict[str, Any] = field(default_factory=dict)
     last_lap_times: dict[str, float] = field(default_factory=dict)
     pit_stops_count: dict[str, int] = field(default_factory=dict)
+    intervals: dict[str, float] = field(default_factory=dict)
+    retired: dict[str, str] = field(default_factory=dict)
+    fastest_lap: dict[str, Any] = field(default_factory=dict)
+    pit_stops_history: list[dict[str, Any]] = field(default_factory=list)
+    race_control_events: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert state to JSON-serializable dictionary."""
@@ -48,6 +58,7 @@ class RaceState:
             "lap": self.lap,
             "positions": self.positions,
             "gaps": self.gaps,
+            "intervals": self.intervals,
             "tyres": {d: [comp, age] for d, (comp, age) in self.tyres.items()},
             "safety_car": self.safety_car,
             "total_laps": self.total_laps,
@@ -56,6 +67,10 @@ class RaceState:
             "weather": self.weather,
             "last_lap_times": self.last_lap_times,
             "pit_stops_count": self.pit_stops_count,
+            "retired": self.retired,
+            "fastest_lap": self.fastest_lap,
+            "pit_stops_history": self.pit_stops_history,
+            "race_control_events": self.race_control_events,
         }
 
     @classmethod
@@ -70,6 +85,7 @@ class RaceState:
             lap=int(data.get("lap", 1)),
             positions={d: int(pos) for d, pos in data.get("positions", {}).items()},
             gaps={d: float(gap) for d, gap in data.get("gaps", {}).items()},
+            intervals={d: float(itv) for d, itv in data.get("intervals", {}).items()},
             tyres=tyres,
             safety_car=bool(data.get("safety_car", False)),
             total_laps=int(data.get("total_laps", 57)),
@@ -78,4 +94,8 @@ class RaceState:
             weather=data.get("weather", {}),
             last_lap_times={d: float(t) for d, t in data.get("last_lap_times", {}).items() if t is not None},
             pit_stops_count={d: int(c) for d, c in data.get("pit_stops_count", {}).items()},
+            retired={d: str(r) for d, r in data.get("retired", {}).items()},
+            fastest_lap=data.get("fastest_lap", {}),
+            pit_stops_history=data.get("pit_stops_history", []),
+            race_control_events=data.get("race_control_events", []),
         )
