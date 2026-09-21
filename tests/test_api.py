@@ -69,4 +69,34 @@ def test_replay_summary_and_events_endpoints():
     assert "race_control" in events
 
 
+def test_safety_car_risk_endpoint():
+    # Test valid circuit with query parameters
+    response = client.get("/api/safety-car/Monaco?lap_fraction=0.05&event_type=SAFETY_CAR")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["circuit"] == "Monaco"
+    assert "sc_prob_per_lap" in data
+    assert "any_sc_prob_per_lap" in data
+    assert "phase_multipliers" in data
+    assert "durations" in data
+    assert data["queried_lap_fraction"] == 0.05
+    assert data["queried_event_type"] == "SAFETY_CAR"
+    assert data["current_lap_probability"] > 0.0
+
+    # Test alias resolution (e.g. 'singapore' -> 'Marina Bay')
+    response_alias = client.get("/api/safety-car/singapore")
+    assert response_alias.status_code == 200
+    data_alias = response_alias.json()
+    assert data_alias["circuit"] == "Marina Bay"
+    assert data_alias["n_races"] > 0
+
+    # Test unknown circuit graceful fallback
+    response_unknown = client.get("/api/safety-car/unseen_test_circuit?lap_fraction=0.5")
+    assert response_unknown.status_code == 200
+    data_unknown = response_unknown.json()
+    assert "any_sc_prob_per_lap" in data_unknown
+    assert 0.005 <= data_unknown["current_lap_probability"] <= 0.25
+
+
+
 

@@ -28,6 +28,7 @@ from src.models.tyre import predict_tyre_degradation
 from src.preprocessing.graph import build_race_graph_from_state
 from src.simulation.monte_carlo import run_monte_carlo
 from src.simulation.replay import ReplaySession, build_state_at_lap, get_race_metadata, run_replay
+from src.simulation.safety_car import get_circuit_safety_car_profile, safety_car_probability
 from src.simulation.state import RaceState
 from src.strategy.optimizer import get_strategy_recommendation
 
@@ -291,6 +292,22 @@ def get_full_backtest() -> dict[str, Any]:
     """Return full historical calendar backtesting summary."""
     results = run_full_backtest(n_sims=60)
     return summarize_backtest(results)
+
+
+@app.get("/api/safety-car/{circuit}")
+def get_safety_car_risk(
+    circuit: str,
+    lap_fraction: Optional[float] = Query(default=None, ge=0.0, le=1.0),
+    event_type: str = Query(default="ANY", pattern="^(ANY|SAFETY_CAR|VIRTUAL_SAFETY_CAR)$"),
+) -> dict[str, Any]:
+    """Return calibrated Safety Car risk profile and deployment probabilities for a circuit."""
+    profile = get_circuit_safety_car_profile(circuit)
+    if lap_fraction is not None:
+        prob = safety_car_probability(circuit, lap_fraction, event_type=event_type)
+        profile["queried_lap_fraction"] = lap_fraction
+        profile["queried_event_type"] = event_type
+        profile["current_lap_probability"] = prob
+    return profile
 
 
 # Serve static frontend if dist exists

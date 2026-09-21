@@ -12,7 +12,11 @@ import numpy as np
 
 from src.models.lap_time import make_lap_time_predictor
 from src.models.tyre import predict_tyre_degradation
-from src.simulation.safety_car import apply_safety_car_bunching, safety_car_probability
+from src.simulation.safety_car import (
+    apply_safety_car_bunching,
+    safety_car_probability,
+    sample_safety_car_duration,
+)
 from src.simulation.state import RaceState
 
 log = logging.getLogger("overtake.simulation.monte_carlo")
@@ -115,11 +119,22 @@ def run_monte_carlo(
     for sp in sim_positions:
         sp.setdefault(target_driver, len(sp) + 1)
     sample_paths: list[list[int]] = [[] for _ in range(n_track)]
+    # Track multi-lap Safety Car episodes across simulations
+    sc_remaining = np.full(n_sims, 2 if state.safety_car else 0, dtype=int)
 
     for sim_lap in range(state.lap + 1, state.total_laps + 1):
         lap_frac = sim_lap / state.total_laps
         sc_prob = safety_car_probability(state.circuit, lap_frac)
-        is_sc = np.random.random(n_sims) < sc_prob
+
+        is_sc = np.zeros(n_sims, dtype=bool)
+        for i in range(n_sims):
+            if sc_remaining[i] > 0:
+                sc_remaining[i] -= 1
+                is_sc[i] = True
+            elif np.random.random() < sc_prob:
+                dur = sample_safety_car_duration(state.circuit, event_type="SAFETY_CAR")
+                sc_remaining[i] = max(0, dur - 1)
+                is_sc[i] = True
 
         # Decide this lap's pit stops and assemble one RaceState per
         # simulation representing state as of the end of sim_lap - 1.
@@ -197,8 +212,13 @@ def run_monte_carlo(
 
             if is_sc[i]:
                 sorted_d = sorted(drivers, key=lambda d: sim_gaps[i][d])
+                curr_gap = 0.0
                 for rank, d in enumerate(sorted_d):
-                    sim_gaps[i][d] = rank * 0.85 + np.random.uniform(0.0, 0.2)
+                    if rank == 0:
+                        sim_gaps[i][d] = 0.0
+                    else:
+                        curr_gap += 0.85 + float(np.random.uniform(-0.1, 0.15))
+                        sim_gaps[i][d] = round(float(min(sim_gaps[i][d], curr_gap)), 2)
 
             ranked = sorted(drivers, key=lambda d: sim_gaps[i][d])
             sim_positions[i] = {d: r + 1 for r, d in enumerate(ranked)}

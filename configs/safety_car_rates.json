@@ -1,0 +1,443 @@
+{
+  "global_averages": {
+    "total_races": 112,
+    "total_laps": 6740,
+    "total_sc_deployments": 92,
+    "total_vsc_deployments": 52,
+    "sc_prob_per_lap": 0.0136,
+    "vsc_prob_per_lap": 0.0077,
+    "any_sc_prob_per_lap": 0.0214
+  },
+  "phase_multipliers": [
+    {
+      "max_lap_fraction": 0.08,
+      "multiplier": 1.9,
+      "phase_name": "start_incidents"
+    },
+    {
+      "max_lap_fraction": 0.35,
+      "multiplier": 0.85,
+      "phase_name": "early_stint"
+    },
+    {
+      "max_lap_fraction": 0.7,
+      "multiplier": 1.15,
+      "phase_name": "pit_window_battles"
+    },
+    {
+      "max_lap_fraction": 1.0,
+      "multiplier": 1.35,
+      "phase_name": "late_race_fatigue"
+    }
+  ],
+  "durations": {
+    "SAFETY_CAR": {
+      "min_laps": 3,
+      "mean_laps": 4.5,
+      "max_laps": 7
+    },
+    "VIRTUAL_SAFETY_CAR": {
+      "min_laps": 1,
+      "mean_laps": 2.2,
+      "max_laps": 4
+    }
+  },
+  "circuits": {
+    "Melbourne": {
+      "n_races": 4,
+      "total_laps": 232,
+      "raw_sc_deployments": 7,
+      "raw_vsc_deployments": 6,
+      "mean_sc_per_race": 1.75,
+      "mean_vsc_per_race": 1.5,
+      "mean_sc_lap_share": 0.146,
+      "sc_prob_per_lap": 0.0365,
+      "vsc_prob_per_lap": 0.0256,
+      "any_sc_prob_per_lap": 0.0621
+    },
+    "Baku": {
+      "n_races": 6,
+      "total_laps": 306,
+      "raw_sc_deployments": 5,
+      "raw_vsc_deployments": 4,
+      "mean_sc_per_race": 0.83,
+      "mean_vsc_per_race": 0.67,
+      "mean_sc_lap_share": 0.134,
+      "sc_prob_per_lap": 0.028,
+      "vsc_prob_per_lap": 0.0183,
+      "any_sc_prob_per_lap": 0.0463
+    },
+    "Sakhir": {
+      "n_races": 7,
+      "total_laps": 398,
+      "raw_sc_deployments": 5,
+      "raw_vsc_deployments": 3,
+      "mean_sc_per_race": 0.71,
+      "mean_vsc_per_race": 0.43,
+      "mean_sc_lap_share": 0.086,
+      "sc_prob_per_lap": 0.0134,
+      "vsc_prob_per_lap": 0.0079,
+      "any_sc_prob_per_lap": 0.0213
+    },
+    "Spa-Francorchamps": {
+      "n_races": 5,
+      "total_laps": 220,
+      "raw_sc_deployments": 3,
+      "raw_vsc_deployments": 0,
+      "mean_sc_per_race": 0.6,
+      "mean_vsc_per_race": 0.0,
+      "mean_sc_lap_share": 0.055,
+      "sc_prob_per_lap": 0.0219,
+      "vsc_prob_per_lap": 0.0081,
+      "any_sc_prob_per_lap": 0.03
+    },
+    "S\u00e3o Paulo": {
+      "n_races": 5,
+      "total_laps": 353,
+      "raw_sc_deployments": 7,
+      "raw_vsc_deployments": 2,
+      "mean_sc_per_race": 1.4,
+      "mean_vsc_per_race": 0.4,
+      "mean_sc_lap_share": 0.116,
+      "sc_prob_per_lap": 0.025,
+      "vsc_prob_per_lap": 0.0105,
+      "any_sc_prob_per_lap": 0.0355
+    },
+    "Silverstone": {
+      "n_races": 7,
+      "total_laps": 364,
+      "raw_sc_deployments": 7,
+      "raw_vsc_deployments": 0,
+      "mean_sc_per_race": 1.0,
+      "mean_vsc_per_race": 0.0,
+      "mean_sc_lap_share": 0.11,
+      "sc_prob_per_lap": 0.0234,
+      "vsc_prob_per_lap": 0.006,
+      "any_sc_prob_per_lap": 0.0294
+    },
+    "Shanghai": {
+      "n_races": 2,
+      "total_laps": 112,
+      "raw_sc_deployments": 2,
+      "raw_vsc_deployments": 1,
+      "mean_sc_per_race": 1.0,
+      "mean_vsc_per_race": 0.5,
+      "mean_sc_lap_share": 0.151,
+      "sc_prob_per_lap": 0.0206,
+      "vsc_prob_per_lap": 0.0112,
+      "any_sc_prob_per_lap": 0.0318
+    },
+    "Hockenheim": {
+      "n_races": 2,
+      "total_laps": 131,
+      "raw_sc_deployments": 5,
+      "raw_vsc_deployments": 2,
+      "mean_sc_per_race": 2.5,
+      "mean_vsc_per_race": 1.0,
+      "mean_sc_lap_share": 0.247,
+      "sc_prob_per_lap": 0.0327,
+      "vsc_prob_per_lap": 0.0158,
+      "any_sc_prob_per_lap": 0.0486
+    },
+    "Suzuka": {
+      "n_races": 5,
+      "total_laps": 265,
+      "raw_sc_deployments": 3,
+      "raw_vsc_deployments": 2,
+      "mean_sc_per_race": 0.6,
+      "mean_vsc_per_race": 0.4,
+      "mean_sc_lap_share": 0.07,
+      "sc_prob_per_lap": 0.0184,
+      "vsc_prob_per_lap": 0.0111,
+      "any_sc_prob_per_lap": 0.0294
+    },
+    "Monaco": {
+      "n_races": 6,
+      "total_laps": 467,
+      "raw_sc_deployments": 4,
+      "raw_vsc_deployments": 1,
+      "mean_sc_per_race": 0.67,
+      "mean_vsc_per_race": 0.17,
+      "mean_sc_lap_share": 0.047,
+      "sc_prob_per_lap": 0.0204,
+      "vsc_prob_per_lap": 0.0096,
+      "any_sc_prob_per_lap": 0.03
+    },
+    "Marina Bay": {
+      "n_races": 5,
+      "total_laps": 307,
+      "raw_sc_deployments": 7,
+      "raw_vsc_deployments": 3,
+      "mean_sc_per_race": 1.4,
+      "mean_vsc_per_race": 0.6,
+      "mean_sc_lap_share": 0.136,
+      "sc_prob_per_lap": 0.0356,
+      "vsc_prob_per_lap": 0.0182,
+      "any_sc_prob_per_lap": 0.0538
+    },
+    "Montr\u00e9al": {
+      "n_races": 4,
+      "total_laps": 280,
+      "raw_sc_deployments": 4,
+      "raw_vsc_deployments": 3,
+      "mean_sc_per_race": 1.0,
+      "mean_vsc_per_race": 0.75,
+      "mean_sc_lap_share": 0.118,
+      "sc_prob_per_lap": 0.0237,
+      "vsc_prob_per_lap": 0.015,
+      "any_sc_prob_per_lap": 0.0387
+    },
+    "Monza": {
+      "n_races": 5,
+      "total_laps": 263,
+      "raw_sc_deployments": 2,
+      "raw_vsc_deployments": 2,
+      "mean_sc_per_race": 0.4,
+      "mean_vsc_per_race": 0.4,
+      "mean_sc_lap_share": 0.094,
+      "sc_prob_per_lap": 0.0144,
+      "vsc_prob_per_lap": 0.0101,
+      "any_sc_prob_per_lap": 0.0245
+    },
+    "Mexico City": {
+      "n_races": 4,
+      "total_laps": 284,
+      "raw_sc_deployments": 2,
+      "raw_vsc_deployments": 3,
+      "mean_sc_per_race": 0.5,
+      "mean_vsc_per_race": 0.75,
+      "mean_sc_lap_share": 0.067,
+      "sc_prob_per_lap": 0.0137,
+      "vsc_prob_per_lap": 0.0118,
+      "any_sc_prob_per_lap": 0.0255
+    },
+    "Spielberg": {
+      "n_races": 4,
+      "total_laps": 284,
+      "raw_sc_deployments": 3,
+      "raw_vsc_deployments": 3,
+      "mean_sc_per_race": 0.75,
+      "mean_vsc_per_race": 0.75,
+      "mean_sc_lap_share": 0.149,
+      "sc_prob_per_lap": 0.0144,
+      "vsc_prob_per_lap": 0.0109,
+      "any_sc_prob_per_lap": 0.0253
+    },
+    "N\u00fcrburgring": {
+      "n_races": 1,
+      "total_laps": 60,
+      "raw_sc_deployments": 1,
+      "raw_vsc_deployments": 1,
+      "mean_sc_per_race": 1.0,
+      "mean_vsc_per_race": 1.0,
+      "mean_sc_lap_share": 0.167,
+      "sc_prob_per_lap": 0.0233,
+      "vsc_prob_per_lap": 0.015,
+      "any_sc_prob_per_lap": 0.0383
+    },
+    "Imola": {
+      "n_races": 4,
+      "total_laps": 252,
+      "raw_sc_deployments": 4,
+      "raw_vsc_deployments": 1,
+      "mean_sc_per_race": 1.0,
+      "mean_vsc_per_race": 0.25,
+      "mean_sc_lap_share": 0.107,
+      "sc_prob_per_lap": 0.0212,
+      "vsc_prob_per_lap": 0.0091,
+      "any_sc_prob_per_lap": 0.0303
+    },
+    "Portim\u00e3o": {
+      "n_races": 2,
+      "total_laps": 132,
+      "raw_sc_deployments": 1,
+      "raw_vsc_deployments": 0,
+      "mean_sc_per_race": 0.5,
+      "mean_vsc_per_race": 0.0,
+      "mean_sc_lap_share": 0.038,
+      "sc_prob_per_lap": 0.0161,
+      "vsc_prob_per_lap": 0.0073,
+      "any_sc_prob_per_lap": 0.0234
+    },
+    "Istanbul": {
+      "n_races": 2,
+      "total_laps": 116,
+      "raw_sc_deployments": 0,
+      "raw_vsc_deployments": 1,
+      "mean_sc_per_race": 0.0,
+      "mean_vsc_per_race": 0.5,
+      "mean_sc_lap_share": 0.035,
+      "sc_prob_per_lap": 0.0136,
+      "vsc_prob_per_lap": 0.0111,
+      "any_sc_prob_per_lap": 0.0247
+    },
+    "Mugello": {
+      "n_races": 1,
+      "total_laps": 59,
+      "raw_sc_deployments": 2,
+      "raw_vsc_deployments": 0,
+      "mean_sc_per_race": 2.0,
+      "mean_vsc_per_race": 0.0,
+      "mean_sc_lap_share": 0.203,
+      "sc_prob_per_lap": 0.03,
+      "vsc_prob_per_lap": 0.0122,
+      "any_sc_prob_per_lap": 0.0423
+    },
+    "Budapest": {
+      "n_races": 4,
+      "total_laps": 280,
+      "raw_sc_deployments": 1,
+      "raw_vsc_deployments": 2,
+      "mean_sc_per_race": 0.25,
+      "mean_vsc_per_race": 0.5,
+      "mean_sc_lap_share": 0.032,
+      "sc_prob_per_lap": 0.0109,
+      "vsc_prob_per_lap": 0.0093,
+      "any_sc_prob_per_lap": 0.0202
+    },
+    "Zandvoort": {
+      "n_races": 4,
+      "total_laps": 288,
+      "raw_sc_deployments": 3,
+      "raw_vsc_deployments": 2,
+      "mean_sc_per_race": 0.75,
+      "mean_vsc_per_race": 0.5,
+      "mean_sc_lap_share": 0.08,
+      "sc_prob_per_lap": 0.0199,
+      "vsc_prob_per_lap": 0.0119,
+      "any_sc_prob_per_lap": 0.0318
+    },
+    "Sochi": {
+      "n_races": 1,
+      "total_laps": 53,
+      "raw_sc_deployments": 0,
+      "raw_vsc_deployments": 0,
+      "mean_sc_per_race": 0.0,
+      "mean_vsc_per_race": 0.0,
+      "mean_sc_lap_share": 0.0,
+      "sc_prob_per_lap": 0.0148,
+      "vsc_prob_per_lap": 0.0084,
+      "any_sc_prob_per_lap": 0.0232
+    },
+    "Jeddah": {
+      "n_races": 4,
+      "total_laps": 200,
+      "raw_sc_deployments": 4,
+      "raw_vsc_deployments": 4,
+      "mean_sc_per_race": 1.0,
+      "mean_vsc_per_race": 1.0,
+      "mean_sc_lap_share": 0.185,
+      "sc_prob_per_lap": 0.0317,
+      "vsc_prob_per_lap": 0.0225,
+      "any_sc_prob_per_lap": 0.0542
+    },
+    "Austin": {
+      "n_races": 4,
+      "total_laps": 224,
+      "raw_sc_deployments": 2,
+      "raw_vsc_deployments": 1,
+      "mean_sc_per_race": 0.5,
+      "mean_vsc_per_race": 0.25,
+      "mean_sc_lap_share": 0.071,
+      "sc_prob_per_lap": 0.0149,
+      "vsc_prob_per_lap": 0.0081,
+      "any_sc_prob_per_lap": 0.023
+    },
+    "Yas Island": {
+      "n_races": 3,
+      "total_laps": 174,
+      "raw_sc_deployments": 0,
+      "raw_vsc_deployments": 1,
+      "mean_sc_per_race": 0.0,
+      "mean_vsc_per_race": 0.33,
+      "mean_sc_lap_share": 0.011,
+      "sc_prob_per_lap": 0.0104,
+      "vsc_prob_per_lap": 0.0087,
+      "any_sc_prob_per_lap": 0.0191
+    },
+    "Le Castellet": {
+      "n_races": 1,
+      "total_laps": 53,
+      "raw_sc_deployments": 1,
+      "raw_vsc_deployments": 1,
+      "mean_sc_per_race": 1.0,
+      "mean_vsc_per_race": 1.0,
+      "mean_sc_lap_share": 0.113,
+      "sc_prob_per_lap": 0.0142,
+      "vsc_prob_per_lap": 0.0099,
+      "any_sc_prob_per_lap": 0.024
+    },
+    "Miami": {
+      "n_races": 3,
+      "total_laps": 171,
+      "raw_sc_deployments": 2,
+      "raw_vsc_deployments": 2,
+      "mean_sc_per_race": 0.67,
+      "mean_vsc_per_race": 0.67,
+      "mean_sc_lap_share": 0.088,
+      "sc_prob_per_lap": 0.0221,
+      "vsc_prob_per_lap": 0.015,
+      "any_sc_prob_per_lap": 0.037
+    },
+    "Barcelona": {
+      "n_races": 3,
+      "total_laps": 198,
+      "raw_sc_deployments": 0,
+      "raw_vsc_deployments": 0,
+      "mean_sc_per_race": 0.0,
+      "mean_vsc_per_race": 0.0,
+      "mean_sc_lap_share": 0.0,
+      "sc_prob_per_lap": 0.0055,
+      "vsc_prob_per_lap": 0.0031,
+      "any_sc_prob_per_lap": 0.0086
+    },
+    "Las Vegas": {
+      "n_races": 2,
+      "total_laps": 100,
+      "raw_sc_deployments": 2,
+      "raw_vsc_deployments": 1,
+      "mean_sc_per_race": 1.0,
+      "mean_vsc_per_race": 0.5,
+      "mean_sc_lap_share": 0.09,
+      "sc_prob_per_lap": 0.0338,
+      "vsc_prob_per_lap": 0.0187,
+      "any_sc_prob_per_lap": 0.0525
+    },
+    "Lusail": {
+      "n_races": 2,
+      "total_laps": 114,
+      "raw_sc_deployments": 3,
+      "raw_vsc_deployments": 0,
+      "mean_sc_per_race": 1.5,
+      "mean_vsc_per_race": 0.0,
+      "mean_sc_lap_share": 0.149,
+      "sc_prob_per_lap": 0.0188,
+      "vsc_prob_per_lap": 0.0049,
+      "any_sc_prob_per_lap": 0.0237
+    },
+    "Monte Carlo": {
+      "n_races": 6,
+      "total_laps": 467,
+      "raw_sc_deployments": 4,
+      "raw_vsc_deployments": 1,
+      "mean_sc_per_race": 0.67,
+      "mean_vsc_per_race": 0.17,
+      "mean_sc_lap_share": 0.047,
+      "sc_prob_per_lap": 0.0129,
+      "vsc_prob_per_lap": 0.0054,
+      "any_sc_prob_per_lap": 0.0183
+    },
+    "Singapore": {
+      "n_races": 5,
+      "total_laps": 307,
+      "raw_sc_deployments": 7,
+      "raw_vsc_deployments": 3,
+      "mean_sc_per_race": 1.4,
+      "mean_vsc_per_race": 0.6,
+      "mean_sc_lap_share": 0.136,
+      "sc_prob_per_lap": 0.0233,
+      "vsc_prob_per_lap": 0.0112,
+      "any_sc_prob_per_lap": 0.0346
+    }
+  }
+}

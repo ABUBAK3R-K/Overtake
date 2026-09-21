@@ -7,7 +7,7 @@
 > How to update: tick off finished items, move "Next up", add any new
 > decisions/issues, and add one line to the Change Log at the bottom.
 
-**Last updated:** 2026-09-21 · Full build Phase 4 (FR-4 replay engine) done: RaceState real-time extensions (intervals, retired, fastest_lap, pit_stops_history, race_control_events), multi-table strict no-leakage aggregation, ReplaySession fast in-memory scrubbing & streaming, API endpoints · Phase 3 (FR-3 lap-time model) done · Phase 2 (tyre model) done · Phase 1 (multi-season data) done
+**Last updated:** 2026-09-21 · Full build Phase 5 (FR-5 safety car model & bunching) done: calibrated empirical deployment rates across 112 races / 33 circuits with Empirical Bayes shrinkage and race-phase multipliers, multi-lap SC episode tracking, realistic bunching gap & interval compression, FastAPI endpoint (/api/safety-car/{circuit}), and 123 tests passing · Phase 4 (FR-4 replay engine) done · Phase 3 (FR-3 lap-time model) done · Phase 2 (tyre model) done · Phase 1 (multi-season data) done
 
 ---
 
@@ -250,6 +250,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-21 | Abubaker | Phase 5 (FR-5): Calibrate empirical Safety Car deployment model across 112 multi-season races (2018–2024, 33 circuits) with Empirical Bayes shrinkage and race-phase multipliers (scripts/calibrate_safety_car.py -> configs/safety_car_rates.json), multi-lap SC episode tracking and realistic bunching dynamics in simulation (src/simulation/safety_car.py, src/simulation/monte_carlo.py), API endpoint (/api/safety-car/{circuit}), and test suite (tests/test_safety_car.py). 123 passing tests |
 | 2026-09-21 | Abubaker | Phase 4 (FR-4): Implement comprehensive race replay engine with RaceState timing extensions (intervals, retired, fastest_lap, pit_stops_history, race_control_events), multi-table strict no-leakage aggregation (laps, tyres, pit_stops, weather, race_control), fast ReplaySession scrubbing/streaming, dedicated future-mutation verification suite (tests/test_replay_leakage.py), and API endpoints (/api/replay/summary, /api/replay/events). 108 passing tests |
 | 2026-09-21 | Abubaker | Phase 3 (FR-3): Implement interaction-aware lap-time modeling with RaceGraph data structures, sequential GRU baseline, relational message-passing GNN model (predict_lap_time_gnn), multi-circuit & traffic-stratified evaluation harness (src/evaluation/lap_time_eval.py, scripts/run_lap_time_eval.py), and FastAPI endpoint update (?model=baseline\|gnn). 100 passing tests |
 | 2026-09-21 | Abubaker | Add frozen tyre evaluation split (configs/tyre_split.toml), ablation scripts, and project guidance (CLAUDE.md) |
