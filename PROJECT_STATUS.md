@@ -251,7 +251,7 @@ Newest first. One line per commit: `date · who · what changed`.
 | Date | Who | Change |
 | --- | --- | --- |
 | 2026-09-15 | Partner | Days 1–13: Ingested weather/race_control/pit_stops; implemented RaceState replay engine, empirical ghost car safety-car model, Monte Carlo stochastic forward rollout, strategy optimizer with locked get_strategy_recommendation() signature, FastAPI backend, historical backtesting suite, interactive telemetry & strategy dashboard in frontend/dist, 72/72 tests passing |
-| 2026-09-21 | Abubaker | Full build Phase 1: 112 races (2018–2024, 33 circuits) ingested, schema v3, manifest + retries + rate-limit handling, race_tags.json, dataset validator, compound/pit_duration fixes, 4 dataset tests |
+| 2026-09-21 | Abubaker | Dataset expansion & validation: 112 races (2018–2024, 33 circuits) config, race condition tags, dataset validation suite |
 | 2026-09-14 | Abubaker | Days 6–7: lap-time model + `predict_lap_time()` / `make_lap_time_predictor()` / batched `predict_many()`, 14 tests; Day 5 track temp blocked on weather table |
 | 2026-09-14 | Abubaker | Day 4: lap cleaning filters, tyre degradation model v1 + `predict_tyre_degradation()`, model config, 16 tests, pinned xgboost/scikit-learn/matplotlib |
 | 2026-09-13 | Abubaker | Day 3: `as_of_lap()` no-leakage guard + 13 tests, EDA notebook, findings and next steps |
