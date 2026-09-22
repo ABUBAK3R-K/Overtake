@@ -69,7 +69,7 @@ def _rival_best_response(
             best_pos = exp_pos
             best = {**cand, "expected_position": exp_pos}
     return best or {"name": "STAY_OUT", "pit_laps": [], "compounds": [],
-                    "expected_position": best_pos}
+                    "expected_position": 99.0}
 
 
 # ─── Public handoff function ──────────────────────────────────────────────────
@@ -95,13 +95,23 @@ def get_strategy_recommendation_gametheory(
                        ``state.positions`` if omitted.
         n_sims:        Monte Carlo simulations per candidate per player.
 
-    Algorithm:
-        For each candidate C the target_driver can make:
-          1. Compute the rival's best response R*(C) — the rival strategy that
-             minimises *their* expected position given that the leader plays C.
-          2. Build a joint strategy ``{target: C, rival: R*(C)}``, then score C
-             by running MC from the *target driver's* perspective in that scenario.
-        Choose C* = argmin expected_position(C | rival plays R*(C)).
+    Algorithm (simplified Stackelberg — see note below):
+          1. Compute the rival's best response R* — the rival strategy that
+             minimises *their* expected position. Under this model R* does not
+             depend on the leader's candidate C (the rival's payoff is scored
+             from `rival_state` alone, not a joint simulation), so it is
+             computed once and reused as context for every candidate.
+          2. For each candidate C the target_driver can make, score C by running
+             MC from the *target driver's* perspective, with R* attached to the
+             result for display/reasoning.
+        Choose C* = argmin expected_position(C).
+
+        This is a real simplification (a true Stackelberg leader-follower
+        simulation would re-score the rival's response conditional on each C),
+        but it is a legitimate first cut: it still surfaces what the rival is
+        likely to do and reports it alongside the recommendation, and it's an
+        order of magnitude cheaper than a joint search over both players'
+        candidate sets.
     """
     # Determine target and rival drivers
     sorted_positions = sorted(state.positions, key=lambda d: state.positions[d])
@@ -126,8 +136,15 @@ def get_strategy_recommendation_gametheory(
 
     log.debug("Gametheory: target=%s rival=%s", target_driver, rival_driver)
 
-    # Pre-compute rival candidates once (shared across all leader candidates)
+    # Pre-compute rival candidates and the rival's best response once — under
+    # this model neither depends on the leader's candidate (see docstring), so
+    # computing it inside the per-candidate loop below would just repeat the
+    # same ~len(rival_candidates) Monte Carlo calls once per leader candidate
+    # for an identical answer every time.
     rival_candidates = _rival_candidates(rival_state, rival_driver)
+    rival_response = _rival_best_response(
+        rival_state, rival_driver, rival_candidates, n_sims=max(20, n_sims // 4)
+    )
 
     leader_candidates = generate_candidate_strategies(state, target_driver)
 
@@ -135,16 +152,10 @@ def get_strategy_recommendation_gametheory(
     baseline_result: dict[str, Any] | None = None
 
     for leader_cand in leader_candidates:
-        # Step 1: Rival picks their best response to this leader move
-        rival_response = _rival_best_response(
-            rival_state, rival_driver, rival_candidates, n_sims=max(20, n_sims // 4)
-        )
-
-        # Step 2: Evaluate leader's strategy in the adversarial scenario.
-        # We model the rival's pit decision by temporarily injecting it into
-        # the state. For simplicity the rival's chosen pit lap is logged but
-        # the MC simulation runs with the leader's own strategy — the rival
-        # effect is captured indirectly via the shared track state model.
+        # Evaluate the leader's strategy, with the rival's best response
+        # attached below for display/reasoning (see docstring simplification
+        # note — the rival effect on pace comes from monte_carlo's own
+        # rival-pit heuristic, not from injecting rival_response directly).
         try:
             sim_res = run_monte_carlo(
                 state=state,

@@ -181,21 +181,33 @@ if _GYM_AVAILABLE:
                 }
 
             try:
+                # seed=None (not the run_monte_carlo default of 42): each
+                # call must sample fresh noise, or every roll-out of a
+                # deterministic policy against a fixed state collapses to the
+                # same number — which silently made n_eval_episodes/confidence
+                # in get_strategy_recommendation_rl() below meaningless.
                 result = run_monte_carlo(
                     state=state,
                     strategy=strategy,
                     target_driver=driver,
                     n_sims=self._n_sims,
+                    seed=None,
                 )
                 expected_pos = result["expected_position"]
             except Exception as exc:
                 log.warning("MC error in env step: %s", exc)
                 expected_pos = 10.0  # Penalty for failed sim
+                result = {
+                    "expected_position": expected_pos, "win_prob": 0.0, "podium_prob": 0.0,
+                    "finish_prob_by_position": {}, "expected_time": 0.0,
+                }
 
             # Reward: negative expected position so lower pos → higher reward
             reward = -float(expected_pos)
             obs = _make_observation(state, driver)
-            return obs, reward, True, False, {"expected_position": expected_pos, "strategy": strategy}
+            return obs, reward, True, False, {
+                "expected_position": expected_pos, "strategy": strategy, "mc_result": result,
+            }
 
         def render(self) -> None:
             pass
@@ -244,8 +256,13 @@ def get_strategy_recommendation_rl(
     env = RaceStrategyEnv.from_state(state, target_driver, n_sims=n_sims)
     obs, _ = env.reset()
 
-    # Collect action scores across episodes
-    action_rewards: dict[int, list[float]] = {a: [] for a in range(4)}
+    # Collect full MC results per action across episodes (not just the reward
+    # scalar) so we can report podium/win probability and a candidates table
+    # in the same shape Engines 1 and 2 return — the API dispatches all three
+    # engines through one rendering path (Design.md §6.13), so a field missing
+    # here silently breaks the dashboard for anyone who selects ?engine=rl.
+    action_results: dict[int, list[dict[str, Any]]] = {a: [] for a in range(4)}
+    episode_choices: list[int] = []  # the action each episode would have picked, for confidence
 
     for _ in range(max(n_eval_episodes, 4)):
         if policy is not None:
@@ -254,43 +271,82 @@ def get_strategy_recommendation_rl(
                 action = int(action_arr)
             except Exception:
                 action = 0
+            _, reward, _, _, info = env.step(action)
+            action_results[action].append(info["mc_result"])
+            episode_choices.append(action)
         else:
-            # Greedy: try each action, pick best (no trained policy provided)
-            best_action, best_reward = 0, float("-inf")
+            # Greedy: try each action this episode, keep every result, and
+            # let the outer aggregation below pick the best by mean reward.
+            # seed=None inside step() means each of these sweeps samples
+            # fresh noise, so repeating this across episodes is genuine
+            # Monte Carlo averaging, not the same sweep n_eval_episodes times.
+            episode_best_action, episode_best_reward = 0, float("-inf")
             for a in range(4):
-                _, reward, _, _, _ = env.step(a)
-                if reward > best_reward:
-                    best_reward, best_action = reward, a
-                obs, _ = env.reset()
-            action = best_action
-
-        _, reward, _, _, _ = env.step(action)
-        action_rewards[action].append(reward)
+                _, reward, _, _, info = env.step(a)
+                action_results[a].append(info["mc_result"])
+                if reward > episode_best_reward:
+                    episode_best_reward, episode_best_action = reward, a
+            episode_choices.append(episode_best_action)
         obs, _ = env.reset()
 
-    # Aggregate: choose action with best mean reward
-    mean_rewards = {
-        a: float(np.mean(v)) if v else float("-inf")
-        for a, v in action_rewards.items()
+    # Aggregate: choose the action with the best mean expected position
+    mean_positions = {
+        a: float(np.mean([r["expected_position"] for r in results]))
+        for a, results in action_results.items() if results
     }
-    best_action = max(mean_rewards, key=lambda a: mean_rewards[a])
-    best_mean_reward = mean_rewards[best_action]
+    if not mean_positions:
+        mean_positions = {0: 10.0}
+    best_action = min(mean_positions, key=lambda a: mean_positions[a])
+    expected_position = mean_positions[best_action]
 
-    expected_position = -best_mean_reward  # reward = -expected_pos
+    def _mean_field(results: list[dict[str, Any]], field: str, default: float = 0.0) -> float:
+        vals = [r.get(field, default) for r in results]
+        return float(np.mean(vals)) if vals else default
 
-    # Baseline: stay-out expected position
-    try:
-        baseline_res = run_monte_carlo(
-            state=state,
-            strategy={"name": "STAY_OUT", "pit_laps": [], "compounds": []},
-            target_driver=target_driver,
-            n_sims=n_sims,
-        )
-        baseline_pos = baseline_res["expected_position"]
-    except Exception:
-        baseline_pos = expected_position
+    def _mean_finish_dist(results: list[dict[str, Any]]) -> dict[int, float]:
+        dists = [r.get("finish_prob_by_position") or {} for r in results]
+        dists = [d for d in dists if d]
+        if not dists:
+            return {}
+        positions = sorted({p for d in dists for p in d})
+        return {p: round(float(np.mean([d.get(p, 0.0) for d in dists])), 4) for p in positions}
 
+    best_results = action_results.get(best_action, [])
+    best_podium_prob = _mean_field(best_results, "podium_prob")
+    best_win_prob = _mean_field(best_results, "win_prob")
+    best_finish_dist = _mean_finish_dist(best_results)
+    best_expected_time = _mean_field(best_results, "expected_time")
+
+    # Baseline: stay-out expected position (action 0), reusing whatever
+    # roll-outs we already collected for it rather than a fresh MC call.
+    stay_out_results = action_results.get(0, [])
+    baseline_pos = (
+        _mean_field(stay_out_results, "expected_position", expected_position)
+        if stay_out_results else expected_position
+    )
     expected_gain = round(baseline_pos - expected_position, 2)
+
+    _action_meta = {
+        0: {"name": "STAY_OUT", "action": "STAY OUT", "pit_laps": [], "compounds": [],
+            "description": "Stay out to the end on current set"},
+        1: {"name": "PIT_HARD", "action": "BOX THIS LAP", "pit_laps": [state.lap + 1], "compounds": ["HARD"],
+            "description": f"Box now on Lap {state.lap + 1} for HARD"},
+        2: {"name": "PIT_MEDIUM", "action": "BOX THIS LAP", "pit_laps": [state.lap + 1], "compounds": ["MEDIUM"],
+            "description": f"Box now on Lap {state.lap + 1} for MEDIUM"},
+        3: {"name": "PIT_SOFT", "action": "BOX THIS LAP", "pit_laps": [state.lap + 1], "compounds": ["SOFT"],
+            "description": f"Box now on Lap {state.lap + 1} for SOFT"},
+    }
+    candidates = [
+        {
+            **_action_meta[a],
+            "expected_position": round(float(np.mean([r["expected_position"] for r in results])), 2),
+            "win_prob": round(_mean_field(results, "win_prob"), 4),
+            "podium_prob": round(_mean_field(results, "podium_prob"), 4),
+            "finish_prob_by_position": _mean_finish_dist(results),
+            "expected_time": round(_mean_field(results, "expected_time"), 2),
+        }
+        for a, results in action_results.items() if results
+    ]
 
     # Map best_action → strategy fields
     current_comp, current_age = state.tyres.get(target_driver, ("MEDIUM", 1))
@@ -312,10 +368,10 @@ def get_strategy_recommendation_rl(
             f"({expected_gain:+.1f} vs stay-out)."
         )
 
-    # Confidence: fraction of episodes that agreed on best action
-    total_eps = sum(len(v) for v in action_rewards.values())
-    best_count = len(action_rewards[best_action])
-    confidence = round(best_count / max(total_eps, 1), 2)
+    # Confidence: fraction of episodes whose own choice agreed with best_action
+    confidence = round(
+        sum(1 for c in episode_choices if c == best_action) / max(len(episode_choices), 1), 2
+    )
     if confidence == 0.0:
         confidence = 0.65
 
@@ -327,7 +383,12 @@ def get_strategy_recommendation_rl(
         "expected_gain": expected_gain,
         "confidence": confidence,
         "expected_position": round(expected_position, 1),
+        "win_prob": round(best_win_prob, 4),
+        "podium_prob": round(best_podium_prob, 4),
+        "finish_prob_by_position": best_finish_dist,
+        "expected_time": round(best_expected_time, 2),
         "reasoning": reasoning,
         "engine": "rl",
         "policy_provided": policy is not None,
+        "candidates": candidates,
     }

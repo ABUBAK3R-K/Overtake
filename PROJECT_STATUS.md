@@ -7,7 +7,7 @@
 > How to update: tick off finished items, move "Next up", add any new
 > decisions/issues, and add one line to the Change Log at the bottom.
 
-**Last updated:** 2026-09-22 · Full build Phase 6 (FR-6 Monte Carlo + FR-7 Strategy Engine 1) confirmed done: `run_monte_carlo()` (N-sim forward simulation with multi-lap SC episodes, pit loss, tyre wear, rival pit logic) and `get_strategy_recommendation()` (exhaustive-search candidate generation/ranking) were already implemented and wired to `/api/simulation` and `/api/strategy`, but not reflected in this file — corrected. Environment fixed: `torch`, `shap`, `gymnasium`, `stable-baselines3` installed and pinned in `requirements.txt` (were listed/approved but `torch` wasn't installed, `shap`/`gymnasium`/`stable-baselines3` weren't even pinned) — full suite now 123/123 passing, `backend.main` imports cleanly · Phase 5 (FR-5 safety car model & bunching) done · Phase 4 (FR-4 replay engine) done · Phase 3 (FR-3 lap-time model) done · Phase 2 (tyre model) done · Phase 1 (multi-season data) done
+**Last updated:** 2026-09-22 · Full build Phase 7 (FR-7 Engines 2–3, FR-8 three-engine backtest) done. Reviewed the Engine 2/3 code that landed after the Phase 6 environment fix and found and fixed 3 real bugs: (1) `gametheory.py` recomputed the rival's best response identically inside the per-candidate loop (~10x redundant Monte Carlo calls; it never actually depended on the candidate) — hoisted out, docstring corrected to say so honestly; (2) `rl_env.py`'s roll-out evaluation called `run_monte_carlo` with its default fixed seed on every episode, so "N roll-outs" of a deterministic policy silently produced N identical results and a fake confidence metric — fixed by passing `seed=None` so episodes actually sample fresh noise; (3) `get_strategy_recommendation_rl()` was missing `podium_prob`/`win_prob`/`finish_prob_by_position`/`candidates` that Engines 1–2 both return despite the API dispatching all three through one rendering path — confirmed via `frontend/dist/app.js:318` that this rendered `"NaN%"` for `?engine=rl`; fixed to match the shared contract. Then extended `src/evaluation/backtest.py` for FR-8: `backtest_decision_point(..., engine=...)` now dispatches to any of the 3 engines and reports `regret_vs_hindsight` (vs. the best candidate that engine itself evaluated), plus `run_multi_engine_backtest()` / `summarize_multi_engine_backtest()` for the three-way comparison, wired to `GET /api/backtest/compare/all`. Full suite 144/144 passing · Phase 6 (FR-6 Monte Carlo + FR-7 Strategy Engine 1, environment fix) done · Phase 5 (FR-5 safety car model & bunching) done · Phase 4 (FR-4 replay engine) done · Phase 3 (FR-3 lap-time model) done · Phase 2 (tyre model) done · Phase 1 (multi-season data) done
 
 ---
 
@@ -233,8 +233,16 @@ tracking in Section 3, which is now historical (both lanes are being built solo)
    `get_strategy_recommendation_rl()` with trained policy or greedy MC fallback. Wired
    `?engine=search|gametheory|rl` into `/api/strategy/{race_id}/{lap}` and added `?include_shap=true|false`
    to `/api/tyre/{race_id}/{driver}/{lap}`. 17 new tests passing in `tests/test_strategy_engines.py`.
-4. **FR-8:** extend `src/evaluation/backtest.py` to run and compare all three engines (regret vs.
-   best-possible hindsight, per engine) across the full 112-race dataset, not just Engine 1.
+4. **FR-8:** ✅ `src/evaluation/backtest.py` now dispatches any of the 3 engines
+   (`backtest_decision_point(..., engine="search"|"gametheory"|"rl")`), reports
+   `regret_vs_hindsight` per decision point, and `run_multi_engine_backtest()` /
+   `summarize_multi_engine_backtest()` give the three-way comparison, wired to
+   `GET /api/backtest/compare/all`. Still only the 6-race `HISTORICAL_BENCHMARKS`
+   set, not the full 112-race dataset — PRD Section 9 wants the full dataset;
+   revisit once there's a systematic way to pick decision points per race rather
+   than curated ones.
+5. Corner/mini-sector driver-performance module (FR-9) — not started, next in PRD §8 build order
+   after backtesting.
 
 ---
 
@@ -262,6 +270,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-22 | Abubaker | Phase 7 (FR-8): Extend `src/evaluation/backtest.py` to dispatch any of the 3 strategy engines and report `regret_vs_hindsight`; add `run_multi_engine_backtest()` / `summarize_multi_engine_backtest()` for the three-way comparison PRD Section 9 asks for; wire `GET /api/backtest/compare/all` and `?engine=` on the existing backtest endpoints; 7 new tests. Before this, reviewed the Engine 2/3 code from the prior 3 commits and fixed 3 real bugs: `gametheory.py` recomputing the rival's best response identically on every leader candidate (redundant, and never actually varied by candidate despite the docstring), `rl_env.py` evaluating "N roll-outs" with `run_monte_carlo`'s fixed default seed so every episode was byte-identical (fake confidence metric), and `get_strategy_recommendation_rl()` missing `podium_prob`/`win_prob`/`finish_prob_by_position`/`candidates` that Engines 1–2 return — confirmed this rendered `"NaN%"` in `frontend/dist/app.js`'s strategy view for `?engine=rl`. 144/144 tests passing |
 | 2026-09-22 | Abubaker | Phase 7 (API & Tests): Wire ?engine=search\|gametheory\|rl into /api/strategy and ?include_shap into /api/tyre; add 17 unit/integration tests in tests/test_strategy_engines.py (140 total tests passing) |
 | 2026-09-22 | Abubaker | Phase 7 (FR-7 Engine 3): Implement Gymnasium RL environment RaceStrategyEnv (src/strategy/rl_env.py) with Discrete(4) actions, Box(12) state, and get_strategy_recommendation_rl() fallback |
 | 2026-09-22 | Abubaker | Phase 7 (FR-7 Engine 2): Implement Stackelberg game theory strategy recommendation (src/strategy/gametheory.py) with rival best response modeling and unified recommendation schema |

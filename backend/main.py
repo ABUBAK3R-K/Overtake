@@ -15,10 +15,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.evaluation.backtest import (
+    ENGINES,
     HISTORICAL_BENCHMARKS,
     backtest_decision_point,
     run_full_backtest,
+    run_multi_engine_backtest,
     summarize_backtest,
+    summarize_multi_engine_backtest,
 )
 from src.ingestion.session import load_race_list
 from src.ingestion.storage import connect
@@ -323,7 +326,10 @@ def get_simulation(
 
 
 @app.get("/api/backtest/{race_id}")
-def get_race_backtest(race_id: str) -> list[dict[str, Any]]:
+def get_race_backtest(
+    race_id: str,
+    engine: str = Query(default="search", pattern="^(search|gametheory|rl)$"),
+) -> list[dict[str, Any]]:
     """Return backtest benchmarks for a specific race."""
     matching = [b for b in HISTORICAL_BENCHMARKS if b["race_id"] == race_id]
     if not matching:
@@ -331,16 +337,30 @@ def get_race_backtest(race_id: str) -> list[dict[str, Any]]:
 
     results = []
     for bm in matching:
-        res = backtest_decision_point(race_id=race_id, driver=bm["driver"], decision_lap=bm["decision_lap"], n_sims=80)
+        res = backtest_decision_point(race_id=race_id, driver=bm["driver"], decision_lap=bm["decision_lap"], n_sims=80, engine=engine)
         results.append(res)
     return results
 
 
 @app.get("/api/backtest")
-def get_full_backtest() -> dict[str, Any]:
-    """Return full historical calendar backtesting summary."""
-    results = run_full_backtest(n_sims=60)
+def get_full_backtest(
+    engine: str = Query(default="search", pattern="^(search|gametheory|rl)$"),
+) -> dict[str, Any]:
+    """Return full historical calendar backtesting summary for one engine."""
+    results = run_full_backtest(n_sims=60, engine=engine)
     return summarize_backtest(results)
+
+
+@app.get("/api/backtest/compare/all")
+def get_backtest_engine_comparison() -> dict[str, Any]:
+    """Run the full backtest suite for all three FR-7 engines and return the
+    three-way comparison (PRD FR-8 / Section 9's headline result). Slower
+    than the single-engine endpoints above since it runs the whole benchmark
+    set three times — intended for the dashboard's backtest summary view,
+    not per-lap polling.
+    """
+    multi = run_multi_engine_backtest(n_sims=60, engines=ENGINES)
+    return summarize_multi_engine_backtest(multi)
 
 
 @app.get("/api/safety-car/{circuit}")
