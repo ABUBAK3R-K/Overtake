@@ -155,11 +155,11 @@ class TestRLEnv:
         state = self._make_state()
         env = RaceStrategyEnv.from_state(state, "VER", n_sims=20)
         obs, _ = env.reset()
-        assert obs.shape == (12,)
+        assert obs.shape == (14,)
         result = env.step(0)  # stay out
         assert len(result) == 5
         obs2, reward, done, truncated, info = result
-        assert obs2.shape == (12,)
+        assert obs2.shape == (14,)
         assert isinstance(reward, float)
         assert done is True
 
@@ -172,12 +172,12 @@ class TestRLEnv:
         assert env.action_space.n == 4
 
     def test_rl_env_observation_space(self):
-        """Observation space must be Box(12,)."""
+        """Observation space must be Box(14,)."""
         pytest.importorskip("gymnasium")
         from src.strategy.rl_env import RaceStrategyEnv
         state = self._make_state()
         env = RaceStrategyEnv.from_state(state, "VER", n_sims=20)
-        assert env.observation_space.shape == (12,)
+        assert env.observation_space.shape == (14,)
 
     def test_get_recommendation_rl_schema(self):
         """get_strategy_recommendation_rl must return required keys."""
