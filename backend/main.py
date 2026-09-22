@@ -264,7 +264,7 @@ def get_strategy(
 
     ``?engine=search`` (default) — exhaustive candidate search via Monte Carlo.
     ``?engine=gametheory`` — Stackelberg competitor-aware game theory.
-    ``?engine=rl`` — RL policy roll-out (greedy MC if no policy trained yet).
+    ``?engine=rl`` — trained PPO policy (greedy MC if none trained yet).
     All three return the same response shape so the dashboard toggle works
     without any frontend changes (Design.md §6.13).
     """
@@ -284,7 +284,6 @@ def get_strategy(
         elif engine == "rl":
             rec = get_strategy_recommendation_rl(
                 state,
-                policy=None,  # No trained policy at endpoint level; greedy MC
                 target_driver=target_driver,
                 n_sims=sims,
             )

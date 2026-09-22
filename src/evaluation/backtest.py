@@ -32,7 +32,7 @@ def _run_engine(engine: str, state, driver: str, n_sims: int) -> dict[str, Any]:
         )
     elif engine == "rl":
         rec = get_strategy_recommendation_rl(
-            state, policy=None, target_driver=driver, n_sims=n_sims
+            state, target_driver=driver, n_sims=n_sims
         )
     elif engine == "search":
         rec = get_strategy_recommendation(state, target_driver=driver, n_sims=n_sims)
