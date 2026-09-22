@@ -4,8 +4,8 @@ Provides:
 
   * ``RaceStrategyEnv``  — a gymnasium.Env wrapping the Monte Carlo / replay
     state machine. Actions are discrete: 0 = stay out, 1..N = pit for compound.
-  * ``get_strategy_recommendation_rl(state, policy)``  — evaluates a trained
-    policy over N roll-outs and returns the same
+  * ``get_strategy_recommendation_rl(state, policy)``  — acts with the trained
+    PPO policy (``rl_policy.py``; loaded automatically) and returns the same
     ``{action, tyre, pit_lap, expected_gain, confidence, engine, ...}`` shape as
     the other two engines so the API layer can render it identically.
 
@@ -13,11 +13,8 @@ The environment is self-contained and does NOT require live FastF1 data — it
 rebuilds observation vectors from the frozen ``RaceState`` snapshot, exactly as
 the Monte Carlo simulator does. This keeps the no-leakage guarantee intact.
 
-Training:
-    env = RaceStrategyEnv.from_state(state, target_driver=driver)
-    model = PPO("MlpPolicy", env, verbose=0)
-    model.learn(total_timesteps=50_000)
-    rec = get_strategy_recommendation_rl(state, policy=model)
+Training: ``python -m src.strategy.rl_policy all`` (see that module — it
+trains on pre-simulated states because live Monte Carlo per step is too slow).
 """
 
 from __future__ import annotations
@@ -44,6 +41,7 @@ from src.simulation.state import RaceState
 
 # Dry compounds in order (action index maps to compound choice)
 _COMPOUNDS = ["HARD", "MEDIUM", "SOFT"]
+OBS_DIM = 14
 
 # ─── Gymnasium Environment ────────────────────────────────────────────────────
 
@@ -51,7 +49,10 @@ _COMPOUNDS = ["HARD", "MEDIUM", "SOFT"]
 def _make_observation(state: RaceState, driver: str) -> np.ndarray:
     """Build a fixed-length float32 observation vector from a RaceState.
 
-    Features (12 dims):
+    Every input is a field of ``state``, which replay builds through
+    ``as_of_lap()``, so the observation can't see past ``state.lap``.
+
+    Features (OBS_DIM = 14):
         0  current_lap / total_laps          (race progress, 0–1)
         1  remaining_laps / total_laps        (inverse of above)
         2  tyre_age / 50.0                   (tyre age normalised)
@@ -63,7 +64,9 @@ def _make_observation(state: RaceState, driver: str) -> np.ndarray:
         8  gap_to_leader / 120.0             (gap, clamped to 2 min)
         9  estimated_pace_loss                (tyre wear in s, 0–5 norm)
        10  laps_since_last_pit / 50.0        (stint length proxy)
-       11  n_drivers / 20.0                  (field size, usually 1)
+       11  n_drivers / 20.0                  (field size)
+       12  gap_to_car_ahead / 30.0           (undercut/overcut target, clamped)
+       13  gap_to_car_behind / 30.0          (pit-loss cover, clamped)
     """
     total = max(state.total_laps, 1)
     lap = state.lap
@@ -92,6 +95,16 @@ def _make_observation(state: RaceState, driver: str) -> np.ndarray:
     # Laps since last pit (approximated from tyre age)
     laps_since_pit = age
 
+    # Gaps to the neighbours: whether a stop drops you behind the car you're
+    # covering is the core of an undercut call, and gap_to_leader alone can't
+    # show it. Missing neighbour (leader / last car) → clamped maximum.
+    order = sorted(state.positions, key=lambda d: state.positions[d])
+    idx = order.index(driver) if driver in order else len(order) - 1
+    ahead = order[idx - 1] if idx > 0 else None
+    behind = order[idx + 1] if idx + 1 < len(order) else None
+    gap_ahead = gap - state.gaps.get(ahead, gap) if ahead else 30.0
+    gap_behind = state.gaps.get(behind, gap) - gap if behind else 30.0
+
     obs = np.array([
         lap / total,
         remaining / total,
@@ -104,7 +117,9 @@ def _make_observation(state: RaceState, driver: str) -> np.ndarray:
         min(abs(gap) / 120.0, 1.0),
         min(pace_loss / 5.0, 1.0),
         min(laps_since_pit / 50.0, 1.0),
-        n_drivers / 20.0,
+        min(n_drivers / 20.0, 1.0),
+        min(max(gap_ahead, 0.0) / 30.0, 1.0),
+        min(max(gap_behind, 0.0) / 30.0, 1.0),
     ], dtype=np.float32)
     return obs
 
@@ -140,9 +155,8 @@ if _GYM_AVAILABLE:
 
             # Action: 0 = stay out, 1 = pit HARD, 2 = pit MEDIUM, 3 = pit SOFT
             self.action_space = spaces.Discrete(4)
-            # Observation: 12 normalised floats
             self.observation_space = spaces.Box(
-                low=0.0, high=1.0, shape=(12,), dtype=np.float32
+                low=0.0, high=1.0, shape=(OBS_DIM,), dtype=np.float32
             )
 
         @classmethod
@@ -216,9 +230,104 @@ if _GYM_AVAILABLE:
 # ─── Public handoff function ──────────────────────────────────────────────────
 
 
+def _action_meta(action: int, lap: int) -> dict[str, Any]:
+    if action == 0:
+        return {"name": "STAY_OUT", "action": "STAY OUT", "pit_laps": [], "compounds": [],
+                "description": "Stay out to the end on current set"}
+    comp = _COMPOUNDS[action - 1]
+    return {"name": f"PIT_{comp}", "action": "BOX THIS LAP", "pit_laps": [lap + 1], "compounds": [comp],
+            "description": f"Box now on Lap {lap + 1} for {comp}"}
+
+
+def _recommend_with_policy(
+    state: RaceState, policy: Any, target_driver: str, n_sims: int,
+) -> dict[str, Any]:
+    """Act with a trained policy. The policy picks the action from the
+    observation alone; every action is still Monte Carlo'd (one shared seed,
+    so they're compared on the same random draws) to report expected
+    positions, the gain vs. staying out, and the candidates table the other
+    engines return. That also means the policy's pick can lose to another
+    candidate — which is exactly the regret FR-8 measures."""
+    from src.strategy.rl_policy import action_probabilities
+
+    obs = _make_observation(state, target_driver)
+    try:
+        probs = action_probabilities(policy, obs)
+        chosen = int(np.argmax(probs))
+    except Exception:
+        # Not an SB3 actor-critic (e.g. a stub with only .predict()).
+        action_arr, _ = policy.predict(obs, deterministic=True)
+        chosen = int(np.asarray(action_arr).reshape(-1)[0])
+        probs = np.eye(4)[chosen]
+
+    try:
+        from src.models.lap_time import make_lap_time_predictor
+        predictor = make_lap_time_predictor(state.race_id, state.lap)
+    except Exception:
+        predictor = None
+
+    seed = int(np.random.default_rng().integers(2**31 - 1))
+    results = {}
+    for a in range(4):
+        meta = _action_meta(a, state.lap)
+        results[a] = run_monte_carlo(
+            state, {"name": meta["name"], "pit_laps": meta["pit_laps"], "compounds": meta["compounds"]},
+            target_driver=target_driver, n_sims=n_sims, lap_time_predictor=predictor, seed=seed,
+        )
+
+    candidates = [
+        {
+            **_action_meta(a, state.lap),
+            "expected_position": round(float(r["expected_position"]), 2),
+            "win_prob": round(float(r["win_prob"]), 4),
+            "podium_prob": round(float(r["podium_prob"]), 4),
+            "finish_prob_by_position": r["finish_prob_by_position"],
+            "expected_time": round(float(r["expected_time"]), 2),
+            "policy_prob": round(float(probs[a]), 3),
+        }
+        for a, r in results.items()
+    ]
+    chosen_res = results[chosen]
+    expected_position = float(chosen_res["expected_position"])
+    expected_gain = round(float(results[0]["expected_position"]) - expected_position, 2)
+    mc_best = min(results, key=lambda a: results[a]["expected_position"])
+
+    current_comp, current_age = state.tyres.get(target_driver, ("MEDIUM", 1))
+    if chosen == 0:
+        action_str, tyre, pit_lap = "STAY OUT", current_comp, None
+        reasoning = (f"RL policy ({probs[0]:.0%} on this action) stays out on {current_comp} "
+                     f"(age {current_age}). Simulated finish: P{expected_position:.1f}.")
+    else:
+        action_str, tyre, pit_lap = "BOX THIS LAP", _COMPOUNDS[chosen - 1], state.lap + 1
+        reasoning = (f"RL policy ({probs[chosen]:.0%} on this action) boxes for {tyre} on lap {pit_lap}. "
+                     f"Simulated finish: P{expected_position:.1f} ({expected_gain:+.1f} vs stay-out).")
+    if mc_best != chosen:
+        gap = expected_position - float(results[mc_best]["expected_position"])
+        reasoning += (f" Monte Carlo at this state rates {_action_meta(mc_best, state.lap)['name']} "
+                      f"{gap:.1f} positions better — the policy generalises across races and can miss that.")
+
+    return {
+        "target_driver": target_driver,
+        "action": action_str,
+        "tyre": tyre,
+        "pit_lap": pit_lap,
+        "expected_gain": expected_gain,
+        "confidence": round(float(probs[chosen]), 2),
+        "expected_position": round(expected_position, 1),
+        "win_prob": round(float(chosen_res["win_prob"]), 4),
+        "podium_prob": round(float(chosen_res["podium_prob"]), 4),
+        "finish_prob_by_position": chosen_res["finish_prob_by_position"],
+        "expected_time": round(float(chosen_res["expected_time"]), 2),
+        "reasoning": reasoning,
+        "engine": "rl",
+        "policy_provided": True,
+        "candidates": candidates,
+    }
+
+
 def get_strategy_recommendation_rl(
     state: RaceState,
-    policy: Any | None = None,
+    policy: Any | None = "auto",
     target_driver: str | None = None,
     n_eval_episodes: int = 10,
     n_sims: int = 100,
@@ -231,9 +340,11 @@ def get_strategy_recommendation_rl(
 
     Args:
         state:            Current RaceState.
-        policy:           A trained stable-baselines3 model (e.g. PPO or DQN)
-                          that implements ``.predict(obs)``. If None, falls back
-                          to a greedy MC policy across all 4 actions.
+        policy:           A trained stable-baselines3 model (e.g. PPO or DQN).
+                          ``"auto"`` (default) loads the saved policy from
+                          ``data/models/rl/``; if none is trained yet, or
+                          ``policy=None``, falls back to a greedy MC search over
+                          all 4 actions (reported as ``policy_provided: False``).
         target_driver:    Driver to optimise for. Defaults to race leader.
         n_eval_episodes:  Number of roll-outs to average over for confidence.
         n_sims:           MC simulations per environment step.
@@ -252,7 +363,13 @@ def get_strategy_recommendation_rl(
         result["engine"] = "rl"
         return result
 
-    # Build env for evaluation
+    if isinstance(policy, str) and policy == "auto":
+        from src.strategy.rl_policy import load_policy
+        policy = load_policy()
+    if policy is not None:
+        return _recommend_with_policy(state, policy, target_driver, n_sims)
+
+    # Greedy MC fallback (no trained policy).
     env = RaceStrategyEnv.from_state(state, target_driver, n_sims=n_sims)
     obs, _ = env.reset()
 
@@ -265,28 +382,17 @@ def get_strategy_recommendation_rl(
     episode_choices: list[int] = []  # the action each episode would have picked, for confidence
 
     for _ in range(max(n_eval_episodes, 4)):
-        if policy is not None:
-            try:
-                action_arr, _ = policy.predict(obs, deterministic=True)
-                action = int(action_arr)
-            except Exception:
-                action = 0
-            _, reward, _, _, info = env.step(action)
-            action_results[action].append(info["mc_result"])
-            episode_choices.append(action)
-        else:
-            # Greedy: try each action this episode, keep every result, and
-            # let the outer aggregation below pick the best by mean reward.
-            # seed=None inside step() means each of these sweeps samples
-            # fresh noise, so repeating this across episodes is genuine
-            # Monte Carlo averaging, not the same sweep n_eval_episodes times.
-            episode_best_action, episode_best_reward = 0, float("-inf")
-            for a in range(4):
-                _, reward, _, _, info = env.step(a)
-                action_results[a].append(info["mc_result"])
-                if reward > episode_best_reward:
-                    episode_best_reward, episode_best_action = reward, a
-            episode_choices.append(episode_best_action)
+        # Try each action this episode, keep every result, and let the outer
+        # aggregation below pick the best by mean reward. seed=None inside
+        # step() means each sweep samples fresh noise, so repeating this
+        # across episodes is genuine Monte Carlo averaging.
+        episode_best_action, episode_best_reward = 0, float("-inf")
+        for a in range(4):
+            _, reward, _, _, info = env.step(a)
+            action_results[a].append(info["mc_result"])
+            if reward > episode_best_reward:
+                episode_best_reward, episode_best_action = reward, a
+        episode_choices.append(episode_best_action)
         obs, _ = env.reset()
 
     # Aggregate: choose the action with the best mean expected position
@@ -326,19 +432,9 @@ def get_strategy_recommendation_rl(
     )
     expected_gain = round(baseline_pos - expected_position, 2)
 
-    _action_meta = {
-        0: {"name": "STAY_OUT", "action": "STAY OUT", "pit_laps": [], "compounds": [],
-            "description": "Stay out to the end on current set"},
-        1: {"name": "PIT_HARD", "action": "BOX THIS LAP", "pit_laps": [state.lap + 1], "compounds": ["HARD"],
-            "description": f"Box now on Lap {state.lap + 1} for HARD"},
-        2: {"name": "PIT_MEDIUM", "action": "BOX THIS LAP", "pit_laps": [state.lap + 1], "compounds": ["MEDIUM"],
-            "description": f"Box now on Lap {state.lap + 1} for MEDIUM"},
-        3: {"name": "PIT_SOFT", "action": "BOX THIS LAP", "pit_laps": [state.lap + 1], "compounds": ["SOFT"],
-            "description": f"Box now on Lap {state.lap + 1} for SOFT"},
-    }
     candidates = [
         {
-            **_action_meta[a],
+            **_action_meta(a, state.lap),
             "expected_position": round(float(np.mean([r["expected_position"] for r in results])), 2),
             "win_prob": round(_mean_field(results, "win_prob"), 4),
             "podium_prob": round(_mean_field(results, "podium_prob"), 4),
@@ -355,7 +451,7 @@ def get_strategy_recommendation_rl(
         tyre = current_comp
         pit_lap = None
         reasoning = (
-            f"RL policy recommends staying out on {current_comp} (age {current_age}). "
+            f"Greedy Monte Carlo (no trained RL policy) recommends staying out on {current_comp} (age {current_age}). "
             f"Expected finish: P{expected_position:.1f}."
         )
     else:
@@ -363,7 +459,7 @@ def get_strategy_recommendation_rl(
         pit_lap = state.lap + 1
         action_str = f"BOX THIS LAP"
         reasoning = (
-            f"RL policy recommends pitting for {tyre} on lap {pit_lap}. "
+            f"Greedy Monte Carlo (no trained RL policy) recommends pitting for {tyre} on lap {pit_lap}. "
             f"Expected finish: P{expected_position:.1f} "
             f"({expected_gain:+.1f} vs stay-out)."
         )
@@ -389,6 +485,6 @@ def get_strategy_recommendation_rl(
         "expected_time": round(best_expected_time, 2),
         "reasoning": reasoning,
         "engine": "rl",
-        "policy_provided": policy is not None,
+        "policy_provided": False,
         "candidates": candidates,
     }
