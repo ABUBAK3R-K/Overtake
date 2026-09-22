@@ -262,6 +262,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-22 | Abubaker | Phase 7 (API & Tests): Wire ?engine=search\|gametheory\|rl into /api/strategy and ?include_shap into /api/tyre; add 17 unit/integration tests in tests/test_strategy_engines.py (140 total tests passing) |
 | 2026-09-22 | Abubaker | Phase 7 (FR-7 Engine 3): Implement Gymnasium RL environment RaceStrategyEnv (src/strategy/rl_env.py) with Discrete(4) actions, Box(12) state, and get_strategy_recommendation_rl() fallback |
 | 2026-09-22 | Abubaker | Phase 7 (FR-7 Engine 2): Implement Stackelberg game theory strategy recommendation (src/strategy/gametheory.py) with rival best response modeling and unified recommendation schema |
 | 2026-09-22 | Abubaker | Phase 2 (FR-2): Add TreeSHAP explainability (shap_values_for) to tyre degradation model and wire into /api/tyre endpoint |

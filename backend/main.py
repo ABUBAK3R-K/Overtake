@@ -24,13 +24,15 @@ from src.ingestion.session import load_race_list
 from src.ingestion.storage import connect
 from src.models.lap_time import predict_lap_time
 from src.models.lap_time_gnn import predict_lap_time_gnn
-from src.models.tyre import predict_tyre_degradation
+from src.models.tyre import predict_tyre_degradation, shap_values_for
 from src.preprocessing.graph import build_race_graph_from_state
 from src.simulation.monte_carlo import run_monte_carlo
 from src.simulation.replay import ReplaySession, build_state_at_lap, get_race_metadata, run_replay
 from src.simulation.safety_car import get_circuit_safety_car_profile, safety_car_probability
 from src.simulation.state import RaceState
 from src.strategy.optimizer import get_strategy_recommendation
+from src.strategy.gametheory import get_strategy_recommendation_gametheory
+from src.strategy.rl_env import get_strategy_recommendation_rl
 
 log = logging.getLogger("overtake.backend")
 
@@ -137,8 +139,11 @@ def get_tyre_prediction(
     driver: str,
     lap: int,
     horizon: int = Query(default=30, ge=1, le=60),
+    include_shap: bool = Query(default=True),
 ) -> dict[str, Any]:
-    """Return tyre degradation curves and wear prediction for the driver."""
+    """Return tyre degradation curves, wear prediction, and optional SHAP feature
+    contributions for the driver's current stint. (Design.md §6.3 / FR-2)
+    """
     try:
         state = build_state_at_lap(race_id, lap)
         current_comp, current_age = state.tyres.get(driver, ("MEDIUM", 1))
@@ -163,7 +168,17 @@ def get_tyre_prediction(
         except Exception:
             current_loss = current_age * 0.05
 
-        return {
+        # SHAP contributions for current tyre state (FR-2 loose end)
+        shap_contributions: dict[str, float] = {}
+        if include_shap:
+            try:
+                shap_contributions = shap_values_for(
+                    current_comp, current_age, circuit, track_temp
+                )
+            except Exception as shap_err:
+                log.debug("SHAP unavailable: %s", shap_err)
+
+        result: dict[str, Any] = {
             "race_id": race_id,
             "driver": driver,
             "current_lap": lap,
@@ -174,6 +189,9 @@ def get_tyre_prediction(
             "current_pace_loss_seconds": round(current_loss, 3),
             "degradation_curves": curves,
         }
+        if shap_contributions:
+            result["shap"] = shap_contributions
+        return result
     except Exception as e:
         log.exception("Error generating tyre degradation for %s %s: %s", race_id, driver, e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -236,15 +254,46 @@ def get_strategy(
     lap: int,
     driver: Optional[str] = Query(default=None),
     sims: int = Query(default=200, ge=20, le=1000),
+    engine: str = Query(default="search", pattern="^(search|gametheory|rl)$"),
 ) -> dict[str, Any]:
-    """Return strategy recommendation and evaluated candidates for a driver."""
+    """Return strategy recommendation for a driver.
+
+    ``?engine=search`` (default) — exhaustive candidate search via Monte Carlo.
+    ``?engine=gametheory`` — Stackelberg competitor-aware game theory.
+    ``?engine=rl`` — RL policy roll-out (greedy MC if no policy trained yet).
+    All three return the same response shape so the dashboard toggle works
+    without any frontend changes (Design.md §6.13).
+    """
     try:
         state = build_state_at_lap(race_id, lap)
-        target_driver = driver or ("VER" if "VER" in state.positions else next(iter(state.positions.keys()), "VER"))
-        rec = get_strategy_recommendation(state, target_driver=target_driver, n_sims=sims)
+        target_driver = driver or (
+            "VER" if "VER" in state.positions
+            else next(iter(state.positions.keys()), "VER")
+        )
+
+        if engine == "gametheory":
+            rec = get_strategy_recommendation_gametheory(
+                state, rival_state=state,
+                target_driver=target_driver,
+                n_sims=sims,
+            )
+        elif engine == "rl":
+            rec = get_strategy_recommendation_rl(
+                state,
+                policy=None,  # No trained policy at endpoint level; greedy MC
+                target_driver=target_driver,
+                n_sims=sims,
+            )
+        else:
+            rec = get_strategy_recommendation(
+                state, target_driver=target_driver, n_sims=sims
+            )
+            rec["engine"] = "search"
+
         return rec
     except Exception as e:
-        log.exception("Error generating strategy recommendation for %s lap %d: %s", race_id, lap, e)
+        log.exception("Error generating strategy for %s lap %d engine=%s: %s",
+                      race_id, lap, engine, e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
