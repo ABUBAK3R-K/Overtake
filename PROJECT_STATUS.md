@@ -7,7 +7,7 @@
 > How to update: tick off finished items, move "Next up", add any new
 > decisions/issues, and add one line to the Change Log at the bottom.
 
-**Last updated:** 2026-09-21 · Full build Phase 5 (FR-5 safety car model & bunching) done: calibrated empirical deployment rates across 112 races / 33 circuits with Empirical Bayes shrinkage and race-phase multipliers, multi-lap SC episode tracking, realistic bunching gap & interval compression, FastAPI endpoint (/api/safety-car/{circuit}), and 123 tests passing · Phase 4 (FR-4 replay engine) done · Phase 3 (FR-3 lap-time model) done · Phase 2 (tyre model) done · Phase 1 (multi-season data) done
+**Last updated:** 2026-09-22 · Full build Phase 6 (FR-6 Monte Carlo + FR-7 Strategy Engine 1) confirmed done: `run_monte_carlo()` (N-sim forward simulation with multi-lap SC episodes, pit loss, tyre wear, rival pit logic) and `get_strategy_recommendation()` (exhaustive-search candidate generation/ranking) were already implemented and wired to `/api/simulation` and `/api/strategy`, but not reflected in this file — corrected. Environment fixed: `torch`, `shap`, `gymnasium`, `stable-baselines3` installed and pinned in `requirements.txt` (were listed/approved but `torch` wasn't installed, `shap`/`gymnasium`/`stable-baselines3` weren't even pinned) — full suite now 123/123 passing, `backend.main` imports cleanly · Phase 5 (FR-5 safety car model & bunching) done · Phase 4 (FR-4 replay engine) done · Phase 3 (FR-3 lap-time model) done · Phase 2 (tyre model) done · Phase 1 (multi-season data) done
 
 ---
 
@@ -219,10 +219,20 @@ exposes every table folder as a DuckDB view. Partner's tables should use the sam
 
 ## 6. Next Up
 
-1. Confirm with partner: race list, schema additions, "as of lap N" semantics, and `predict_tyre_degradation()` behaviour (§5)
-2. Partner Day 6 integration: walk through §5 notes for both handoff functions; agree on `RaceState.race_id`
-3. When `weather` lands: retrain tyre model with track temp, compare held-out-race error
-4. Day 8: MAE/RMSE writeup for both models (numbers above are the starting point; add per-race tables + plots in a notebook)
+Full-build phase tracking (PRD.md §8 build order) — this supersedes the two-lane sprint-day
+tracking in Section 3, which is now historical (both lanes are being built solo).
+
+1. **FR-2 loose end:** SHAP explainability was never wired up despite Phase 2 being marked done —
+   `shap` is now installed; add SHAP value output to the tyre model and surface it via
+   `/api/tyre/...` for the Model view.
+2. **FR-7 Strategy Engine 2 (game theory):** `get_strategy_recommendation_gametheory(state, rival_state)`
+   in `src/strategy/` — Stackelberg-style, reuses `run_monte_carlo` as the payoff evaluator, same
+   `{action, tyre, expected_gain, confidence, engine}` return shape as Engine 1 (Design.md §5).
+3. **FR-7 Strategy Engine 3 (RL):** gymnasium `Env` wrapping the replay/Monte Carlo state machine,
+   DQN/PPO via `stable-baselines3`, `get_strategy_recommendation_rl(state, policy)`. Wire
+   `?engine=search|gametheory|rl` into `/api/strategy/{race_id}/{lap}` once both exist.
+4. **FR-8:** extend `src/evaluation/backtest.py` to run and compare all three engines (regret vs.
+   best-possible hindsight, per engine) across the full 112-race dataset, not just Engine 1.
 
 ---
 
@@ -250,6 +260,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-22 | Abubaker | Environment fix: installed `torch` (was pinned but missing from `.venv`, breaking 15 tests + backend boot) and pinned/installed `shap`, `gymnasium`, `stable-baselines3` (approved deps, never pinned). Full suite now 123/123 passing, `backend.main` confirmed to import cleanly. Corrected this file's phase tracking — FR-6 (Monte Carlo, `src/simulation/monte_carlo.py`) and FR-7 Strategy Engine 1 (exhaustive search, `src/strategy/optimizer.py`, `/api/simulation`, `/api/strategy`) were already built and are not reflected accurately in prior entries below. Next: FR-7 Engines 2–3 (game theory, RL) and FR-8 (three-engine backtest) |
 | 2026-09-21 | Abubaker | Phase 5 (FR-5): Calibrate empirical Safety Car deployment model across 112 multi-season races (2018–2024, 33 circuits) with Empirical Bayes shrinkage and race-phase multipliers (scripts/calibrate_safety_car.py -> configs/safety_car_rates.json), multi-lap SC episode tracking and realistic bunching dynamics in simulation (src/simulation/safety_car.py, src/simulation/monte_carlo.py), API endpoint (/api/safety-car/{circuit}), and test suite (tests/test_safety_car.py). 123 passing tests |
 | 2026-09-21 | Abubaker | Phase 4 (FR-4): Implement comprehensive race replay engine with RaceState timing extensions (intervals, retired, fastest_lap, pit_stops_history, race_control_events), multi-table strict no-leakage aggregation (laps, tyres, pit_stops, weather, race_control), fast ReplaySession scrubbing/streaming, dedicated future-mutation verification suite (tests/test_replay_leakage.py), and API endpoints (/api/replay/summary, /api/replay/events). 108 passing tests |
 | 2026-09-21 | Abubaker | Phase 3 (FR-3): Implement interaction-aware lap-time modeling with RaceGraph data structures, sequential GRU baseline, relational message-passing GNN model (predict_lap_time_gnn), multi-circuit & traffic-stratified evaluation harness (src/evaluation/lap_time_eval.py, scripts/run_lap_time_eval.py), and FastAPI endpoint update (?model=baseline\|gnn). 100 passing tests |
