@@ -41,6 +41,53 @@ def _run_engine(engine: str, state, driver: str, n_sims: int) -> dict[str, Any]:
         raise ValueError(f"unknown engine {engine!r}; expected one of {ENGINES}")
     return rec
 
+
+def _actual_outcome(race_id: str, driver: str, decision_lap: int, con) -> dict[str, Any]:
+    """Derive what really happened from ingested data (pit_stops, laps), for
+    any race/driver/decision point — not just the 6 curated in
+    HISTORICAL_BENCHMARKS. Used so backtesting can scale to the full dataset
+    (PRD FR-8) without a circular fallback (see the docstring note in
+    ``backtest_decision_point`` about why the old fallback was unusable)."""
+    pit = con.sql(
+        "SELECT lap, compound_after FROM pit_stops "
+        "WHERE race_id = ? AND driver = ? AND lap > ? ORDER BY lap LIMIT 1",
+        params=[race_id, driver, decision_lap],
+    ).fetchone()
+    actual_action = f"BOX LAP {pit[0]}" if pit else "STAY OUT (no further stop)"
+    actual_compound = pit[1] if pit else None
+
+    finish = con.sql(
+        "SELECT position FROM laps WHERE race_id = ? AND driver = ? AND position IS NOT NULL "
+        "ORDER BY lap_number DESC LIMIT 1",
+        params=[race_id, driver],
+    ).fetchone()
+    actual_finish = int(finish[0]) if finish and finish[0] is not None else None
+
+    return {"actual_action": actual_action, "actual_compound": actual_compound, "actual_finish": actual_finish}
+
+
+def decision_points_for_race(
+    race_id: str, con=None, max_points: int = 2,
+) -> list[tuple[str, int]]:
+    """Pick (driver, decision_lap) pairs from a race's *real* pit stops — one
+    lap before each of the ``max_points`` earliest real stops, by distinct
+    driver. This is how full-dataset backtesting (PRD FR-8) chooses decision
+    points without hand-curation: it evaluates the AI at the exact moment a
+    real strategist actually had to decide.
+
+    Races with no ingested pit stops (or none early enough to leave a
+    meaningful lap window) return an empty list; the caller skips them.
+    """
+    if con is None:
+        con = connect()
+    rows = con.sql(
+        "SELECT driver, MIN(lap) AS lap FROM pit_stops "
+        "WHERE race_id = ? AND lap > 3 GROUP BY driver ORDER BY lap LIMIT ?",
+        params=[race_id, max_points],
+    ).fetchall()
+    return [(driver, int(lap) - 1) for driver, lap in rows]
+
+
 # Key historical decision points in 2023 races for benchmarking
 HISTORICAL_BENCHMARKS = [
     {
@@ -152,9 +199,20 @@ def backtest_decision_point(
     confidence = rec["confidence"]
     reasoning = rec["reasoning"]
 
-    actual_action = bm["actual_action"] if bm else "BOX LAP " + str(decision_lap + 1)
-    actual_compound = bm["actual_compound"] if bm else ai_tyre
-    actual_finish = bm["actual_finish"] if bm else int(round(expected_pos))
+    if bm:
+        actual_action = bm["actual_action"]
+        actual_compound = bm["actual_compound"]
+        actual_finish = bm["actual_finish"]
+    else:
+        # No curated benchmark for this race/driver/lap — look up what
+        # actually happened from ingested data rather than deriving "actual"
+        # from the AI's own prediction (that was circular: pos_delta would
+        # be ~0 by construction and every unbenchmarked point would silently
+        # score as "MATCHED REAL STRATEGY").
+        real = _actual_outcome(race_id, driver, decision_lap, con)
+        actual_action = real["actual_action"]
+        actual_compound = real["actual_compound"] or ai_tyre
+        actual_finish = real["actual_finish"] if real["actual_finish"] is not None else int(round(expected_pos))
 
     # Outcome evaluation: positive pos_delta means the AI's simulated expected
     # finish beats what actually happened historically (lower position number
@@ -228,6 +286,52 @@ def run_multi_engine_backtest(
     if con is None:
         con = connect()
     return {engine: run_full_backtest(con=con, n_sims=n_sims, engine=engine) for engine in engines}
+
+
+def run_dataset_backtest(
+    race_ids: list[str] | None = None,
+    con=None,
+    n_sims: int = 60,
+    engine: str = "search",
+    decision_points_per_race: int = 2,
+    on_result=None,
+) -> list[dict[str, Any]]:
+    """Run one engine across real decision points drawn from every given race
+    (PRD FR-8: "across the full ingested dataset", not just the 6 curated
+    HISTORICAL_BENCHMARKS points). Decision points come from
+    ``decision_points_for_race`` — a real pit stop per driver — and the
+    comparison outcome comes from ``_actual_outcome``, so this needs no
+    hand-curation and scales to all 112 races.
+
+    ``race_ids`` defaults to every race in configs/races.toml. Races with no
+    ingested data, or no early pit stops to build decision points from, are
+    skipped (not counted as failures — there was nothing to evaluate).
+
+    ``on_result``, if given, is called with each result dict as soon as it's
+    produced — this is how the CLI script below checkpoints progress for a
+    112-race x 3-engine run that can take a long time and may be interrupted.
+    """
+    if con is None:
+        con = connect()
+    if race_ids is None:
+        race_ids = [r["race_id"] for r in load_race_list()]
+
+    results: list[dict[str, Any]] = []
+    for race_id in race_ids:
+        try:
+            points = decision_points_for_race(race_id, con=con, max_points=decision_points_per_race)
+        except Exception:
+            log.warning("Skipping %s: could not build decision points (not ingested?)", race_id, exc_info=True)
+            continue
+        for driver, decision_lap in points:
+            res = backtest_decision_point(
+                race_id=race_id, driver=driver, decision_lap=decision_lap,
+                con=con, n_sims=n_sims, engine=engine,
+            )
+            results.append(res)
+            if on_result is not None:
+                on_result(res)
+    return results
 
 
 def summarize_backtest(results: list[dict[str, Any]]) -> dict[str, Any]:
