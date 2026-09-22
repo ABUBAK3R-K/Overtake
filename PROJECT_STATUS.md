@@ -262,6 +262,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-22 | Abubaker | Phase 7 (FR-7 Engine 3): Implement Gymnasium RL environment RaceStrategyEnv (src/strategy/rl_env.py) with Discrete(4) actions, Box(12) state, and get_strategy_recommendation_rl() fallback |
 | 2026-09-22 | Abubaker | Phase 7 (FR-7 Engine 2): Implement Stackelberg game theory strategy recommendation (src/strategy/gametheory.py) with rival best response modeling and unified recommendation schema |
 | 2026-09-22 | Abubaker | Phase 2 (FR-2): Add TreeSHAP explainability (shap_values_for) to tyre degradation model and wire into /api/tyre endpoint |
 | 2026-09-22 | Abubaker | Environment fix: installed `torch` (was pinned but missing from `.venv`, breaking 15 tests + backend boot) and pinned/installed `shap`, `gymnasium`, `stable-baselines3` (approved deps, never pinned). Full suite now 123/123 passing, `backend.main` confirmed to import cleanly. Corrected this file's phase tracking — FR-6 (Monte Carlo, `src/simulation/monte_carlo.py`) and FR-7 Strategy Engine 1 (exhaustive search, `src/strategy/optimizer.py`, `/api/simulation`, `/api/strategy`) were already built and are not reflected accurately in prior entries below. Next: FR-7 Engines 2–3 (game theory, RL) and FR-8 (three-engine backtest) |
