@@ -233,6 +233,31 @@ tracking in Section 3, which is now historical (both lanes are being built solo)
    `get_strategy_recommendation_rl()` with trained policy or greedy MC fallback. Wired
    `?engine=search|gametheory|rl` into `/api/strategy/{race_id}/{lap}` and added `?include_shap=true|false`
    to `/api/tyre/{race_id}/{driver}/{lap}`. 17 new tests passing in `tests/test_strategy_engines.py`.
+   **Trained policy (2026-09-23):** until now no policy had ever been trained, so `?engine=rl` and the
+   backtest were really a greedy Monte Carlo search. Now `src/strategy/rl_policy.py` pre-simulates
+   493 decision states (112 races, ~5 per race: 3 one lap before real pit stops + 2 random; all 4 actions
+   Monte Carlo'd at 150 sims on a shared seed) into `data/models/rl/dataset.jsonl`, and PPO trains on
+   them via `CachedStrategyEnv` (reward = positions gained vs. staying out) → `data/models/rl/ppo_policy.zip`.
+   Live MC per step (~3.5 s) would have made training take days. Observation grew 12 → 14 dims (gap to car
+   ahead/behind — the undercut signal). The frozen tyre split's 14 `test_races` are held out.
+   `get_strategy_recommendation_rl()` loads the policy automatically (`policy="auto"`); confidence is now the
+   policy's own action probability, and all 4 actions are still Monte Carlo'd so the candidates table and
+   `regret_vs_hindsight` are real. Held-out results (59 states, regret = expected positions lost vs. the
+   best of the 4 actions per the same simulator):
+
+   | Policy | Mean regret | Picked best |
+   | --- | --- | --- |
+   | **PPO policy** | **0.30** | **61%** |
+   | Always pit SOFT (best fixed action) | 0.47 | 49% |
+   | Random | 0.77 | 25% |
+   | Always stay out | 1.94 | 32% |
+
+   Caveats, stated plainly: the policy beats the fixed-action baselines but still misses the best
+   action 39% of the time. It never picks HARD, although HARD is best in 5 of 59 held-out states.
+   Rewards come from the simulator, not real outcomes, so this measures "learns the simulator's
+   preferences", not "better strategy than a human". That "always pit SOFT" scores this well says
+   the simulator itself favours an extra soft stop, which is worth checking separately. The held-out
+   set is small.
 4. **FR-8:** ✅ `src/evaluation/backtest.py` now dispatches any of the 3 engines
    (`backtest_decision_point(..., engine="search"|"gametheory"|"rl")`), reports
    `regret_vs_hindsight` per decision point, and `run_multi_engine_backtest()` /
@@ -245,6 +270,10 @@ tracking in Section 3, which is now historical (both lanes are being built solo)
    This is PRD Section 9's headline result ("an honest three-way comparison... across the
    full dataset") and should happen before claiming FR-8 is evidenced, not just implemented.
    Expect this to take a while (112 races × 3 engines × 2 decision points); run in background.
+   **Use `--fresh` (or delete the `"engine": "rl"` rows from `checkpoint.jsonl`):** the partial
+   checkpoint from 2026-09-22 (39 rows, 20 races) has RL rows scored with the greedy MC fallback,
+   before the trained policy existed. Run it with limited parallelism: the RL dataset build was
+   stopped for low memory at 7 workers and finished at 3.
 6. **Corner/mini-sector driver-performance module (FR-9):** ✅ Implemented in `src/performance/corner.py`
    (`analyze_corner_performance()`, `analyze_driver_lap_vs_benchmark()`) and exposed via
    `GET /api/corner-analysis/{race_id}/{driver}/{lap}`. Evaluates per-corner delta times, minimum apex speeds,
@@ -276,6 +305,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-23 | Abubaker | Phase 7 (FR-7 Engine 3): Document PPO policy benchmark results (mean regret 0.30 positions, 61% best action on held-out test races) and checkpoint recommendations in PROJECT_STATUS.md |
 | 2026-09-23 | Abubaker | Phase 7 (FR-7 Engine 3 & FR-8): Wire trained RL policy into backend /api/strategy and backtest evaluation runner |
 | 2026-09-23 | Abubaker | Phase 7 (FR-7 Engine 3): Add comprehensive unit and integration tests in tests/test_rl_policy.py for environment, reward functions, and recommendation contract |
 | 2026-09-23 | Abubaker | Phase 7 (FR-7 Engine 3): Wire trained RL policy auto-loading into get_strategy_recommendation_rl() with full candidate Monte Carlo evaluation |
