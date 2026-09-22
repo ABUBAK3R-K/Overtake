@@ -225,12 +225,14 @@ tracking in Section 3, which is now historical (both lanes are being built solo)
 1. **FR-2 loose end:** SHAP explainability was never wired up despite Phase 2 being marked done —
    `shap` is now installed; add SHAP value output to the tyre model and surface it via
    `/api/tyre/...` for the Model view.
-2. **FR-7 Strategy Engine 2 (game theory):** `get_strategy_recommendation_gametheory(state, rival_state)`
-   in `src/strategy/` — Stackelberg-style, reuses `run_monte_carlo` as the payoff evaluator, same
-   `{action, tyre, expected_gain, confidence, engine}` return shape as Engine 1 (Design.md §5).
-3. **FR-7 Strategy Engine 3 (RL):** gymnasium `Env` wrapping the replay/Monte Carlo state machine,
-   DQN/PPO via `stable-baselines3`, `get_strategy_recommendation_rl(state, policy)`. Wire
-   `?engine=search|gametheory|rl` into `/api/strategy/{race_id}/{lap}` once both exist.
+2. **FR-7 Strategy Engine 2 (game theory):** ✅ `get_strategy_recommendation_gametheory(state, rival_state)`
+   in `src/strategy/gametheory.py` — Stackelberg-style leader/follower optimization with rival best response,
+   same `{action, tyre, expected_gain, confidence, engine}` return shape as Engine 1.
+3. **FR-7 Strategy Engine 3 (RL):** ✅ gymnasium `RaceStrategyEnv` in `src/strategy/rl_env.py`
+   wrapping the Monte Carlo evaluation with Discrete(4) actions and Box(12) observation space, plus
+   `get_strategy_recommendation_rl()` with trained policy or greedy MC fallback. Wired
+   `?engine=search|gametheory|rl` into `/api/strategy/{race_id}/{lap}` and added `?include_shap=true|false`
+   to `/api/tyre/{race_id}/{driver}/{lap}`. 17 new tests passing in `tests/test_strategy_engines.py`.
 4. **FR-8:** extend `src/evaluation/backtest.py` to run and compare all three engines (regret vs.
    best-possible hindsight, per engine) across the full 112-race dataset, not just Engine 1.
 
@@ -260,6 +262,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-22 | Abubaker | Phase 7 (FR-7 & FR-2): Add TreeSHAP explainability (shap_values_for) to tyre model & /api/tyre; implement Strategy Engine 2 (Stackelberg game theory, src/strategy/gametheory.py) & Strategy Engine 3 (gymnasium RL env RaceStrategyEnv + greedy MC fallback, src/strategy/rl_env.py); wire ?engine=search\|gametheory\|rl into /api/strategy; add 17 unit/integration tests in tests/test_strategy_engines.py (140 total tests passing) |
 | 2026-09-22 | Abubaker | Environment fix: installed `torch` (was pinned but missing from `.venv`, breaking 15 tests + backend boot) and pinned/installed `shap`, `gymnasium`, `stable-baselines3` (approved deps, never pinned). Full suite now 123/123 passing, `backend.main` confirmed to import cleanly. Corrected this file's phase tracking — FR-6 (Monte Carlo, `src/simulation/monte_carlo.py`) and FR-7 Strategy Engine 1 (exhaustive search, `src/strategy/optimizer.py`, `/api/simulation`, `/api/strategy`) were already built and are not reflected accurately in prior entries below. Next: FR-7 Engines 2–3 (game theory, RL) and FR-8 (three-engine backtest) |
 | 2026-09-21 | Abubaker | Phase 5 (FR-5): Calibrate empirical Safety Car deployment model across 112 multi-season races (2018–2024, 33 circuits) with Empirical Bayes shrinkage and race-phase multipliers (scripts/calibrate_safety_car.py -> configs/safety_car_rates.json), multi-lap SC episode tracking and realistic bunching dynamics in simulation (src/simulation/safety_car.py, src/simulation/monte_carlo.py), API endpoint (/api/safety-car/{circuit}), and test suite (tests/test_safety_car.py). 123 passing tests |
 | 2026-09-21 | Abubaker | Phase 4 (FR-4): Implement comprehensive race replay engine with RaceState timing extensions (intervals, retired, fastest_lap, pit_stops_history, race_control_events), multi-table strict no-leakage aggregation (laps, tyres, pit_stops, weather, race_control), fast ReplaySession scrubbing/streaming, dedicated future-mutation verification suite (tests/test_replay_leakage.py), and API endpoints (/api/replay/summary, /api/replay/events). 108 passing tests |

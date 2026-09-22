@@ -381,7 +381,7 @@ def predict_tyre_degradation(compound: str, age: int, circuit: str,
     age:        tyre age in laps (FastF1 TyreLife, as in the tyres table).
     circuit:    `races.circuit`, e.g. "Sakhir". Unseen circuits are routed to
                 a circuit-agnostic model (compound + age only).
-    track_temp: accepted for the Design.md �5 contract but ignored: it did not
+    track_temp: accepted for the Design.md §5 contract but ignored: it did not
                 improve held-out error, so the served model is trained without it.
 
     Results are memoised (temp rounded to 0.5 C), so calling this for every
@@ -389,6 +389,39 @@ def predict_tyre_degradation(compound: str, age: int, circuit: str,
     """
     temp = float("nan") if track_temp is None else round(float(track_temp) * 2) / 2
     return _predict_cached(str(compound).upper(), int(age), str(circuit), temp)
+
+
+def shap_values_for(compound: str, age: int, circuit: str,
+                    track_temp: float) -> dict[str, float]:
+    """Return per-feature TreeSHAP contributions for a single tyre state.
+
+    Returns a dict ``{feature_name: contribution_seconds, ..., "bias": float}``
+    where values sum to the raw (pre-floor) ``predict_tyre_degradation`` value.
+
+    Uses XGBoost's exact TreeSHAP via ``TyreModel.shap_values()`` — no extra
+    ``shap`` package dependency at runtime. Falls back to an empty dict if the
+    default model is not the pooled variant (e.g. per-compound model).
+    """
+    model = _default_model()
+    # For RoutedTyreModel use the pooled 'known' sub-model; for a plain
+    # TyreModel use it directly (requires pooled variant).
+    target: TyreModel | None = None
+    if isinstance(model, RoutedTyreModel):
+        target = model.known  # always pooled
+    elif isinstance(model, TyreModel) and model.variant == "pooled":
+        target = model
+
+    if target is None:
+        return {}
+
+    frame = pd.DataFrame({
+        "compound": [str(compound).upper()],
+        "tyre_age_at_lap": [int(age)],
+        "circuit": [str(circuit)],
+        "track_temp": [float(track_temp) if track_temp is not None else float("nan")],
+    })
+    df = target.shap_values(frame)
+    return {col: round(float(df[col].iloc[0]), 5) for col in df.columns}
 
 
 # --- Evaluation ------------------------------------------------------------
