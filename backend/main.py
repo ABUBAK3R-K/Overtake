@@ -28,6 +28,7 @@ from src.ingestion.storage import connect
 from src.models.lap_time import predict_lap_time
 from src.models.lap_time_gnn import predict_lap_time_gnn
 from src.models.tyre import predict_tyre_degradation, shap_values_for
+from src.performance.corner import analyze_driver_lap_vs_benchmark
 from src.preprocessing.graph import build_race_graph_from_state
 from src.simulation.monte_carlo import run_monte_carlo
 from src.simulation.replay import ReplaySession, build_state_at_lap, get_race_metadata, run_replay
@@ -361,6 +362,34 @@ def get_backtest_engine_comparison() -> dict[str, Any]:
     """
     multi = run_multi_engine_backtest(n_sims=60, engines=ENGINES)
     return summarize_multi_engine_backtest(multi)
+
+
+@app.get("/api/corner-analysis/{race_id}/{driver}/{lap}")
+def get_corner_analysis(
+    race_id: str,
+    driver: str,
+    lap: int,
+    benchmark_driver: Optional[str] = Query(default=None),
+    benchmark_lap: Optional[int] = Query(default=None),
+) -> dict[str, Any]:
+    """Per-corner time-loss breakdown for one driver's lap vs. a benchmark
+    lap (PRD FR-9, Design.md Section 6.11). Defaults the benchmark to the
+    race's overall fastest lap if not given.
+
+    Loads a full FastF1 session on demand (cached in-process after the first
+    call for a given race_id) rather than reading the ingested `telemetry`
+    table, which only stores per-lap summaries — see src/performance/corner.py.
+    The first request for a given race can take tens of seconds even from
+    local cache; later requests for the same race are fast.
+    """
+    try:
+        return analyze_driver_lap_vs_benchmark(
+            race_id, driver, lap,
+            benchmark_driver=benchmark_driver, benchmark_lap=benchmark_lap,
+        )
+    except Exception as e:
+        log.exception("Error running corner analysis for %s %s lap %d", race_id, driver, lap)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/safety-car/{circuit}")

@@ -245,8 +245,10 @@ tracking in Section 3, which is now historical (both lanes are being built solo)
    This is PRD Section 9's headline result ("an honest three-way comparison... across the
    full dataset") and should happen before claiming FR-8 is evidenced, not just implemented.
    Expect this to take a while (112 races × 3 engines × 2 decision points); run in background.
-6. Corner/mini-sector driver-performance module (FR-9) — not started, next in PRD §8 build order
-   after backtesting.
+6. **Corner/mini-sector driver-performance module (FR-9):** ✅ Implemented in `src/performance/corner.py`
+   (`analyze_corner_performance()`, `analyze_driver_lap_vs_benchmark()`) and exposed via
+   `GET /api/corner-analysis/{race_id}/{driver}/{lap}`. Evaluates per-corner delta times, minimum apex speeds,
+   throttle percentages, and braking points vs. benchmark laps. 14 new tests in `tests/test_corner_analysis.py` (164/164 tests passing).
 
 ---
 
@@ -274,6 +276,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-23 | Abubaker | Phase 8 (FR-9 corner/mini-sector driver performance): Implement corner telemetry segmentation, per-corner delta calculations, brake/throttle/speed profiling in `src/performance/corner.py`; wire `GET /api/corner-analysis/{race_id}/{driver}/{lap}` endpoint in `backend/main.py`; add 14 unit and integration tests in `tests/test_corner_analysis.py` (164/164 tests passing) |
 | 2026-09-22 | Abubaker | Phase 7 (FR-8 full-dataset backtest): Fix `backtest_decision_point()`'s fallback for unbenchmarked races — it was deriving "actual_finish" from the AI's own `expected_position`, silently scoring every non-curated point as a match. Replaced with `_actual_outcome()` (real pit stop + classified finish from `pit_stops`/`laps`) and `decision_points_for_race()` (one decision point per driver's earliest real stop). Add `run_dataset_backtest()` and resumable `scripts/run_full_backtest.py` (checkpoints to `data/models/backtest/checkpoint.jsonl`) to run all 3 engines across all 112 races, not just the 6 curated ones. Smoke-tested on 4 races incl. a resume-from-checkpoint check; full-scale run not yet executed. Fixed a DuckDB API bug found in the process (`con.sql(query, params=[...])` needs `params` as a keyword, not positional — the two new queries had it positional and failed every call). 6 new tests, 150/150 passing |
 | 2026-09-22 | Abubaker | Phase 7 (FR-8): Extend `src/evaluation/backtest.py` to dispatch any of the 3 strategy engines and report `regret_vs_hindsight`; add `run_multi_engine_backtest()` / `summarize_multi_engine_backtest()` for the three-way comparison PRD Section 9 asks for; wire `GET /api/backtest/compare/all` and `?engine=` on the existing backtest endpoints; 7 new tests. Before this, reviewed the Engine 2/3 code from the prior 3 commits and fixed 3 real bugs: `gametheory.py` recomputing the rival's best response identically on every leader candidate (redundant, and never actually varied by candidate despite the docstring), `rl_env.py` evaluating "N roll-outs" with `run_monte_carlo`'s fixed default seed so every episode was byte-identical (fake confidence metric), and `get_strategy_recommendation_rl()` missing `podium_prob`/`win_prob`/`finish_prob_by_position`/`candidates` that Engines 1–2 return — confirmed this rendered `"NaN%"` in `frontend/dist/app.js`'s strategy view for `?engine=rl`. 144/144 tests passing |
 | 2026-09-22 | Abubaker | Phase 7 (API & Tests): Wire ?engine=search\|gametheory\|rl into /api/strategy and ?include_shap into /api/tyre; add 17 unit/integration tests in tests/test_strategy_engines.py (140 total tests passing) |
