@@ -276,6 +276,7 @@ Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
 | --- | --- | --- |
+| 2026-09-23 | Abubaker | Phase 7 (FR-7 Engine 3): Add comprehensive unit and integration tests in tests/test_rl_policy.py for environment, reward functions, and recommendation contract |
 | 2026-09-23 | Abubaker | Phase 7 (FR-7 Engine 3): Wire trained RL policy auto-loading into get_strategy_recommendation_rl() with full candidate Monte Carlo evaluation |
 | 2026-09-23 | Abubaker | Phase 7 (FR-7 Engine 3): Add offline PPO training pipeline in src/strategy/rl_policy.py with CachedStrategyEnv and parallel dataset builder |
 | 2026-09-23 | Abubaker | Phase 7 (FR-7 Engine 3): Expand RL observation space 12 -> 14 dims to incorporate gap ahead and gap behind undercut signals; update RaceStrategyEnv observation space and unit tests |
