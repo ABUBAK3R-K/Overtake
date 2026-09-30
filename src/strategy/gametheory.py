@@ -237,5 +237,6 @@ def get_strategy_recommendation_gametheory(
         "podium_prob": best["podium_prob"],
         "reasoning": reasoning,
         "engine": "gametheory",
+        "strategy": {k: best.get(k) for k in ("name", "pit_laps", "compounds")},
         "candidates": evaluated,
     }

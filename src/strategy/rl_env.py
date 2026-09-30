@@ -321,6 +321,7 @@ def _recommend_with_policy(
         "reasoning": reasoning,
         "engine": "rl",
         "policy_provided": True,
+        "strategy": {k: _action_meta(chosen, state.lap)[k] for k in ("name", "pit_laps", "compounds")},
         "candidates": candidates,
     }
 
@@ -486,5 +487,6 @@ def get_strategy_recommendation_rl(
         "reasoning": reasoning,
         "engine": "rl",
         "policy_provided": False,
+        "strategy": {k: _action_meta(best_action, state.lap)[k] for k in ("name", "pit_laps", "compounds")},
         "candidates": candidates,
     }

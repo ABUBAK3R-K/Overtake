@@ -80,9 +80,15 @@ def decision_points_for_race(
     """
     if con is None:
         con = connect()
+    # The EXISTS clause drops "stops" that were really retirements into the
+    # pits (no laps after them) — the earliest "stop" in a race is often one,
+    # and there's no strategy decision to score there.
     rows = con.sql(
-        "SELECT driver, MIN(lap) AS lap FROM pit_stops "
-        "WHERE race_id = ? AND lap > 3 GROUP BY driver ORDER BY lap LIMIT ?",
+        "SELECT p.driver, MIN(p.lap) AS lap FROM pit_stops p "
+        "WHERE p.race_id = ? AND p.lap > 3 AND EXISTS ("
+        "  SELECT 1 FROM laps l WHERE l.race_id = p.race_id AND l.driver = p.driver "
+        "  AND l.lap_number > p.lap + 2) "
+        "GROUP BY p.driver ORDER BY lap LIMIT ?",
         params=[race_id, max_points],
     ).fetchall()
     return [(driver, int(lap) - 1) for driver, lap in rows]
@@ -393,3 +399,243 @@ def summarize_multi_engine_backtest(
         "best_engine_by_success_rate": best_engine,
         "ranking": ranked,
     }
+
+
+# ─── Fair three-engine scoring (PRD FR-8 / Section 9) ────────────────────────
+#
+# `regret_vs_hindsight` above compares each engine only against candidates it
+# evaluated itself. Search and game theory both return the argmin of their
+# own candidate list, so their regret is 0 by construction, and their
+# self-reported expected positions carry a winner's-curse bias (the minimum of
+# ~12 noisy estimates is optimistic). That can't support a three-way
+# comparison. `score_decision_point_fair` instead re-simulates every engine's
+# pick, the real team's strategy, and a shared reference set on one fresh seed
+# that no engine selected with, and measures regret against the best of that
+# shared set — the same yardstick for every engine.
+
+FAIR_SEED_OFFSET = 7_919  # keep evaluation seeds away from run_monte_carlo's default 42
+DRY_AND_WET = {"SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET"}
+
+
+def _strategy_key(strategy: dict[str, Any]) -> tuple:
+    return (
+        tuple(int(x) for x in strategy.get("pit_laps") or []),
+        tuple(str(c).upper() for c in strategy.get("compounds") or []),
+    )
+
+
+def real_strategy(race_id: str, driver: str, decision_lap: int, con) -> dict[str, Any]:
+    """What the team actually did after ``decision_lap``, as a strategy dict
+    the simulator can replay (all remaining real stops, in order).
+
+    ~4% of pit_stops rows have compound_after UNKNOWN/NULL (often a
+    retirement into the pits). Those fall back to the tyres table's compound
+    on the following laps; if that's missing too, ``unscorable`` is set and
+    the real strategy is left out of the comparison rather than simulated on
+    a made-up compound."""
+    rows = con.sql(
+        "SELECT lap, compound_after FROM pit_stops WHERE race_id = ? AND driver = ? AND lap > ? ORDER BY lap",
+        params=[race_id, driver, decision_lap],
+    ).fetchall()
+    laps, compounds, unscorable = [], [], None
+    for lap, comp in rows:
+        comp = str(comp).upper() if comp is not None else "UNKNOWN"
+        if comp not in DRY_AND_WET:
+            nxt = con.sql(
+                "SELECT compound FROM tyres WHERE race_id = ? AND driver = ? AND lap_number > ? "
+                "AND compound IS NOT NULL ORDER BY lap_number LIMIT 1",
+                params=[race_id, driver, int(lap)],
+            ).fetchone()
+            comp = str(nxt[0]).upper() if nxt else "UNKNOWN"
+        if comp not in DRY_AND_WET:
+            unscorable = f"unknown compound after lap {int(lap)} stop (likely a retirement)"
+        laps.append(int(lap))
+        compounds.append(comp)
+    out = {"name": "REAL" if laps else "REAL_STAY_OUT", "pit_laps": laps, "compounds": compounds}
+    if unscorable:
+        out["unscorable"] = unscorable
+    return out
+
+
+def score_decision_point_fair(
+    race_id: str,
+    driver: str,
+    decision_lap: int,
+    con=None,
+    engines: tuple[str, ...] = ENGINES,
+    engine_sims: int = 60,
+    eval_sims: int = 200,
+) -> dict[str, Any]:
+    """Score all engines at one real decision point on a common yardstick.
+
+    Reference set = Engine 1's candidate generator + the RL action set + each
+    engine's pick + the real strategy, deduplicated, each run for
+    ``eval_sims`` on one shared seed. Regret for X = E[finish | X] minus the
+    best in the reference set. The real strategy is scored the same way, so
+    "engine vs. what the team did" is compared inside the same simulator.
+    ``actual_finish`` is kept only to check how well the simulator itself
+    matches reality.
+    """
+    import time
+    import zlib
+
+    from src.models.lap_time import make_lap_time_predictor
+    from src.simulation.monte_carlo import run_monte_carlo
+    from src.strategy.optimizer import generate_candidate_strategies
+    from src.strategy.rl_env import _action_meta
+
+    if con is None:
+        con = connect()
+    base = {"race_id": race_id, "driver": driver, "decision_lap": decision_lap}
+
+    state = build_state_at_lap(race_id, decision_lap, con=con)
+    if driver not in state.positions or state.total_laps - state.lap < 3:
+        return {**base, "skipped": "driver not running or race nearly over"}
+    base["circuit"] = state.circuit
+
+    picks: dict[str, dict[str, Any]] = {}
+    for engine in engines:
+        t0 = time.time()
+        try:
+            rec = _run_engine(engine, state, driver, engine_sims)
+            picks[engine] = {
+                "strategy": rec["strategy"],
+                "self_expected_position": float(rec["expected_position"]),
+                "confidence": rec.get("confidence"),
+                "seconds": round(time.time() - t0, 1),
+            }
+        except Exception as exc:  # noqa: BLE001 — one engine failing mustn't sink the point
+            log.warning("engine %s failed at %s %s L%d", engine, race_id, driver, decision_lap, exc_info=True)
+            picks[engine] = {"error": repr(exc), "seconds": round(time.time() - t0, 1)}
+
+    real = real_strategy(race_id, driver, decision_lap, con)
+    reference: dict[tuple, dict[str, Any]] = {}
+    pool = (
+        generate_candidate_strategies(state, driver)
+        + [_action_meta(a, state.lap) for a in range(4)]
+        + [p["strategy"] for p in picks.values() if "strategy" in p]
+        + ([] if "unscorable" in real else [real])
+    )
+    for s in pool:
+        reference.setdefault(_strategy_key(s), {k: s.get(k) for k in ("name", "pit_laps", "compounds")})
+
+    try:
+        predictor = make_lap_time_predictor(race_id, decision_lap)
+    except Exception:
+        predictor = None
+    seed = FAIR_SEED_OFFSET + zlib.crc32(f"{race_id}|{driver}|{decision_lap}".encode()) % 1_000_000
+    expected = {
+        key: float(run_monte_carlo(state, s, target_driver=driver, n_sims=eval_sims,
+                                   lap_time_predictor=predictor, seed=seed)["expected_position"])
+        for key, s in reference.items()
+    }
+    best_key = min(expected, key=expected.get)
+    best_pos = expected[best_key]
+
+    def _score(strategy: dict[str, Any]) -> dict[str, Any]:
+        pos = expected[_strategy_key(strategy)]
+        return {"expected_position": round(pos, 3), "regret": round(pos - best_pos, 3),
+                "picked_best": _strategy_key(strategy) == best_key}
+
+    engines_out = {}
+    for engine, p in picks.items():
+        engines_out[engine] = {**p, **_score(p["strategy"])} if "strategy" in p else p
+
+    return {
+        **base,
+        "eval_sims": eval_sims,
+        "n_reference": len(reference),
+        "hindsight_best": {**reference[best_key], "expected_position": round(best_pos, 3)},
+        "engines": engines_out,
+        "real": {"strategy": real, **({} if "unscorable" in real else _score(real))},
+        "actual_finish": _actual_outcome(race_id, driver, decision_lap, con)["actual_finish"],
+    }
+
+
+def _bootstrap_ci(values, n_boot: int = 2000, seed: int = 0) -> list[float] | None:
+    import numpy as np
+
+    v = np.asarray(values, dtype=float)
+    if len(v) < 2:
+        return None
+    rng = np.random.default_rng(seed)
+    means = v[rng.integers(0, len(v), size=(n_boot, len(v)))].mean(axis=1)
+    return [round(float(np.percentile(means, 2.5)), 3), round(float(np.percentile(means, 97.5)), 3)]
+
+
+def summarize_fair_backtest(
+    rows: list[dict[str, Any]],
+    held_out: set[str] | None = None,
+    race_tags: dict[str, dict] | None = None,
+    tie_margin: float = 0.25,
+) -> dict[str, Any]:
+    """Aggregate ``score_decision_point_fair`` rows. Regret numbers come with a
+    95% bootstrap CI; "vs real" is a paired comparison inside the simulator,
+    counting |difference| <= ``tie_margin`` positions as a tie."""
+    import numpy as np
+
+    scored = [r for r in rows if "engines" in r]
+    contenders = sorted({e for r in scored for e in r["engines"]}) + ["real"]
+
+    def _get(r, c):
+        return r["real"] if c == "real" else r["engines"].get(c, {})
+
+    def _block(subset: list[dict]) -> dict[str, Any]:
+        out: dict[str, Any] = {"n_points": len(subset)}
+        for c in contenders:
+            ok = [r for r in subset if "regret" in _get(r, c)]
+            reg = [_get(r, c)["regret"] for r in ok]
+            entry: dict[str, Any] = {
+                "n": len(ok),
+                "failed": len(subset) - len(ok),
+                "mean_regret": round(float(np.mean(reg)), 3) if reg else None,
+                "mean_regret_ci95": _bootstrap_ci(reg),
+                "median_regret": round(float(np.median(reg)), 3) if reg else None,
+                "picked_best_pct": round(100 * float(np.mean([_get(r, c)["picked_best"] for r in ok])), 1) if ok else None,
+                "mean_expected_position": round(float(np.mean([_get(r, c)["expected_position"] for r in ok])), 2) if ok else None,
+            }
+            paired = [r for r in ok if "expected_position" in r["real"]]
+            if c != "real" and paired:
+                diff = [_get(r, c)["expected_position"] - r["real"]["expected_position"] for r in paired]
+                entry["vs_real"] = {
+                    "n": len(paired),
+                    "mean_diff": round(float(np.mean(diff)), 3),  # negative = engine finishes ahead of real strategy
+                    "mean_diff_ci95": _bootstrap_ci(diff),
+                    "better_pct": round(100 * float(np.mean([d < -tie_margin for d in diff])), 1),
+                    "tie_pct": round(100 * float(np.mean([abs(d) <= tie_margin for d in diff])), 1),
+                    "worse_pct": round(100 * float(np.mean([d > tie_margin for d in diff])), 1),
+                }
+                secs = [_get(r, c)["seconds"] for r in ok if "seconds" in _get(r, c)]
+                entry["mean_seconds"] = round(float(np.mean(secs)), 1) if secs else None
+                optimism = [_get(r, c)["self_expected_position"] - _get(r, c)["expected_position"] for r in ok]
+                entry["self_report_optimism"] = round(float(np.mean(optimism)), 3)  # negative = engine over-promised
+            out[c] = entry
+        return out
+
+    summary: dict[str, Any] = {
+        "n_rows": len(rows),
+        "n_skipped": sum(1 for r in rows if "skipped" in r),
+        "n_races": len({r["race_id"] for r in scored}),
+        "all": _block(scored),
+    }
+    ranking = [c for c in contenders if summary["all"][c]["mean_regret"] is not None]
+    summary["ranking_by_mean_regret"] = sorted(ranking, key=lambda c: summary["all"][c]["mean_regret"])
+
+    if held_out:
+        summary["held_out_races"] = _block([r for r in scored if r["race_id"] in held_out])
+        summary["training_races"] = _block([r for r in scored if r["race_id"] not in held_out])
+    if race_tags:
+        for tag in ("wet", "sc_heavy"):
+            summary[f"tag_{tag}"] = _block([r for r in scored if race_tags.get(r["race_id"], {}).get(tag)])
+
+    calib = [(r["real"]["expected_position"], r["actual_finish"]) for r in scored
+             if r.get("actual_finish") is not None and "expected_position" in r["real"]]
+    if calib:
+        sim, act = np.asarray(calib, dtype=float).T
+        summary["simulator_calibration"] = {
+            "n": len(calib),
+            "mae_real_strategy_vs_actual_finish": round(float(np.mean(np.abs(sim - act))), 2),
+            "correlation": round(float(np.corrcoef(sim, act)[0, 1]), 3) if len(calib) > 2 else None,
+            "mean_bias": round(float(np.mean(sim - act)), 2),  # negative = simulator too optimistic
+        }
+    return summary

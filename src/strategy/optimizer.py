@@ -186,4 +186,6 @@ def get_strategy_recommendation(
         "podium_prob": best_candidate["podium_prob"],
         "reasoning": reasoning,
         "candidates": evaluated_candidates,
+        # The full chosen plan (a two-stop keeps both stops, unlike pit_lap/tyre).
+        "strategy": {k: best_candidate.get(k) for k in ("name", "pit_laps", "compounds")},
     }

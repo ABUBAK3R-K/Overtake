@@ -14,6 +14,8 @@ const state = {
   playSpeed: 1,
   playTimer: null,
   cachedReplayState: null,
+  selectedEngine: "search",
+  backtestEngine: "search",
 };
 
 // DOM Elements
@@ -115,6 +117,41 @@ function initEventListeners() {
   if (btnRunCustom) {
     btnRunCustom.addEventListener("click", runCustomSimulation);
   }
+
+  // Strategy Engine Selector Toggle (FR-7 Engines 1-3)
+  document.querySelectorAll(".engine-toggle-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".engine-toggle-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.selectedEngine = btn.dataset.engine;
+      loadStrategyView();
+    });
+  });
+
+  // Backtest Engine Selector Toggle
+  document.querySelectorAll(".bt-engine-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".bt-engine-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.backtestEngine = btn.dataset.engine;
+      loadBacktestView();
+    });
+  });
+
+  // Keyboard navigation shortcuts
+  window.addEventListener("keydown", (e) => {
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+    if (e.code === "ArrowLeft") {
+      e.preventDefault();
+      btnPrevLap.click();
+    } else if (e.code === "ArrowRight") {
+      e.preventDefault();
+      btnNextLap.click();
+    } else if (e.code === "Space") {
+      e.preventDefault();
+      togglePlay();
+    }
+  });
 }
 
 // Playback Loop
@@ -233,12 +270,43 @@ function renderRaceView(raceState) {
 
   const sortedDrivers = Object.entries(raceState.positions || {}).sort((a, b) => a[1] - b[1]);
 
+  // Synchronize driver select options with actual drivers in the session
+  if (sortedDrivers.length > 0) {
+    const existingOptions = Array.from(driverSelect.options).map((o) => o.value);
+    const gridDrivers = sortedDrivers.map(([d]) => d);
+    const matchesGrid = gridDrivers.length === existingOptions.length && gridDrivers.every((d) => existingOptions.includes(d));
+    if (!matchesGrid) {
+      driverSelect.innerHTML = "";
+      sortedDrivers.forEach(([d, p]) => {
+        const opt = document.createElement("option");
+        opt.value = d;
+        opt.textContent = `${d} (P${p})`;
+        driverSelect.appendChild(opt);
+      });
+      if (gridDrivers.includes(state.targetDriver)) {
+        driverSelect.value = state.targetDriver;
+      } else {
+        state.targetDriver = gridDrivers[0];
+        driverSelect.value = state.targetDriver;
+      }
+    }
+  }
+
   const driversList = [];
   const gapsList = [];
 
   sortedDrivers.forEach(([driver, pos]) => {
     const tr = document.createElement("tr");
+    tr.className = "clickable-row";
     if (driver === state.targetDriver) tr.classList.add("highlighted");
+    tr.title = `Click to focus on ${driver}`;
+    tr.addEventListener("click", () => {
+      if (state.targetDriver !== driver) {
+        state.targetDriver = driver;
+        driverSelect.value = driver;
+        updateViewData();
+      }
+    });
 
     const tyreInfo = (raceState.tyres && raceState.tyres[driver]) || ["MEDIUM", 1];
     const comp = tyreInfo[0];
@@ -292,7 +360,7 @@ function renderRaceView(raceState) {
 // ----------------------------------------------------
 async function loadStrategyView() {
   try {
-    const res = await fetch(`/api/strategy/${state.currentRaceId}/${state.currentLap}?driver=${state.targetDriver}&sims=150`);
+    const res = await fetch(`/api/strategy/${state.currentRaceId}/${state.currentLap}?driver=${state.targetDriver}&sims=150&engine=${state.selectedEngine}`);
     if (res.ok) {
       const data = await res.json();
       renderStrategyView(data);
@@ -303,40 +371,66 @@ async function loadStrategyView() {
 }
 
 function renderStrategyView(data) {
-  document.getElementById("strategy-confidence").textContent = `CONFIDENCE: ${(data.confidence * 100).toFixed(0)}%`;
-  document.getElementById("rec-action-badge").textContent = data.action;
+  // Sync engine toggle button active state
+  const activeEngine = data.engine || state.selectedEngine;
+  document.querySelectorAll(".engine-toggle-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.engine === activeEngine);
+  });
+
+  document.getElementById("strategy-confidence").textContent = `CONFIDENCE: ${((data.confidence || 0.8) * 100).toFixed(0)}%`;
+  document.getElementById("rec-action-badge").textContent = data.action || "BOX THIS LAP";
+
+  const engineLabels = {
+    search: "ENGINE: MC SEARCH",
+    gametheory: "ENGINE: GAME THEORY",
+    rl: "ENGINE: RL POLICY (PPO)",
+  };
+  const engineBadge = document.getElementById("rec-engine-badge");
+  if (engineBadge) {
+    engineBadge.textContent = engineLabels[activeEngine] || `ENGINE: ${activeEngine.toUpperCase()}`;
+  }
 
   const tyreBadge = document.getElementById("rec-tyre-badge");
-  tyreBadge.textContent = `FOR ${data.tyre}`;
-  tyreBadge.className = `hero-compound-badge ${data.tyre.toLowerCase()}`;
+  const recTyre = data.tyre || "MEDIUM";
+  tyreBadge.textContent = `FOR ${recTyre}`;
+  tyreBadge.className = `hero-compound-badge ${recTyre.toLowerCase()}`;
 
   const gainVal = document.getElementById("rec-gain-val");
-  gainVal.textContent = `${data.expected_gain >= 0 ? "+" : ""}${data.expected_gain.toFixed(1)} POS`;
-  gainVal.className = data.expected_gain >= 0 ? "val positive" : "val";
+  const gain = data.expected_gain != null ? data.expected_gain : 0.0;
+  gainVal.textContent = `${gain >= 0 ? "+" : ""}${gain.toFixed(1)} POS`;
+  gainVal.className = gain >= 0 ? "val positive" : "val";
 
-  document.getElementById("rec-exp-pos").textContent = `P ${data.expected_position.toFixed(1)}`;
-  document.getElementById("rec-podium-prob").textContent = `${(data.podium_prob * 100).toFixed(1)}%`;
-  document.getElementById("rec-reasoning-text").textContent = data.reasoning;
+  const expPos = data.expected_position != null ? data.expected_position : 1.0;
+  document.getElementById("rec-exp-pos").textContent = `P ${expPos.toFixed(1)}`;
+
+  const podProb = data.podium_prob != null ? data.podium_prob : 0.0;
+  document.getElementById("rec-podium-prob").textContent = `${(podProb * 100).toFixed(1)}%`;
+  document.getElementById("rec-reasoning-text").textContent = data.reasoning || "Optimized pit strategy evaluated.";
 
   // Render Candidates Table
   const tbody = document.getElementById("candidates-body");
   tbody.innerHTML = "";
 
   (data.candidates || []).forEach((c) => {
-    const isOptimal = c.action === data.action && (c.compounds[0] === data.tyre || !c.compounds.length);
+    const compList = Array.isArray(c.compounds) ? c.compounds : [];
+    const firstComp = compList.length > 0 ? compList[0] : recTyre;
+    const isOptimal = c.action === data.action && (firstComp === recTyre || !compList.length);
     const tr = document.createElement("tr");
     if (isOptimal) tr.classList.add("highlighted");
 
     const pitLap = c.pit_laps && c.pit_laps.length ? `Lap ${c.pit_laps.join(", ")}` : "None";
-    const comp = c.compounds && c.compounds.length ? c.compounds.join(" → ") : "Current";
+    const comp = compList.length > 0 ? compList.join(" → ") : "Stay Out";
+    const cPos = c.expected_position != null ? c.expected_position.toFixed(1) : "--";
+    const cWin = c.win_prob != null ? (c.win_prob * 100).toFixed(1) : "0.0";
+    const cPodium = c.podium_prob != null ? (c.podium_prob * 100).toFixed(1) : "0.0";
 
     tr.innerHTML = `
-      <td><strong>${c.description || c.name}</strong></td>
+      <td><strong>${c.description || c.name || "Strategy"}</strong></td>
       <td>${pitLap}</td>
-      <td><span class="tyre-badge ${c.compounds[0] || 'MEDIUM'}">${comp}</span></td>
-      <td>P ${c.expected_position.toFixed(1)}</td>
-      <td>${(c.win_prob * 100).toFixed(1)}%</td>
-      <td>${(c.podium_prob * 100).toFixed(1)}%</td>
+      <td><span class="tyre-badge ${firstComp}">${comp}</span></td>
+      <td>P ${cPos}</td>
+      <td>${cWin}%</td>
+      <td>${cPodium}%</td>
       <td>${isOptimal ? '<span class="badge live">RECOMMENDED</span>' : '<span class="badge">ALTERNATIVE</span>'}</td>
     `;
     tbody.appendChild(tr);
@@ -412,7 +506,7 @@ function renderSimulationView(data) {
 // ----------------------------------------------------
 async function loadTyreView() {
   try {
-    const res = await fetch(`/api/tyre/${state.currentRaceId}/${state.targetDriver}/${state.currentLap}`);
+    const res = await fetch(`/api/tyre/${state.currentRaceId}/${state.targetDriver}/${state.currentLap}?include_shap=true`);
     if (res.ok) {
       const data = await res.json();
       renderTyreView(data);
@@ -426,18 +520,41 @@ function renderTyreView(data) {
   document.getElementById("tyre-circuit-badge").textContent = `${(data.circuit || "Circuit").toUpperCase()} · TRACK ${Math.round(data.track_temp || 30)}°C`;
   
   const compPill = document.getElementById("current-compound-pill");
-  compPill.textContent = data.compound;
-  compPill.className = `compound-icon-large ${data.compound.toLowerCase()}`;
+  const compName = data.compound || "MEDIUM";
+  compPill.textContent = compName;
+  compPill.className = `compound-icon-large ${compName.toLowerCase()}`;
 
   document.getElementById("tyre-age-display").textContent = `${data.current_age} Laps`;
-  document.getElementById("tyre-loss-display").textContent = `+${data.current_pace_loss_seconds.toFixed(2)} s/lap`;
+  document.getElementById("tyre-loss-display").textContent = `+${(data.current_pace_loss_seconds || 0).toFixed(2)} s/lap`;
 
-  const maxLife = data.compound === "SOFT" ? 22 : (data.compound === "MEDIUM" ? 32 : 44);
+  const maxLife = compName === "SOFT" ? 22 : (compName === "MEDIUM" ? 32 : 44);
   const remainingLaps = Math.max(0, maxLife - data.current_age);
   document.getElementById("tyre-cliff-display").textContent = `Lap ${state.currentLap + remainingLaps} (${remainingLaps} Laps remaining)`;
 
   const healthPct = Math.max(5, Math.min(100, (remainingLaps / maxLife) * 100));
   document.getElementById("tyre-health-fill").style.width = `${healthPct}%`;
+
+  // Render SHAP Explainability Breakdown
+  const shapContainer = document.getElementById("tyre-shap-container");
+  const shapList = document.getElementById("tyre-shap-list");
+  if (shapContainer && shapList) {
+    if (data.shap && Object.keys(data.shap).length > 0) {
+      shapContainer.style.display = "block";
+      shapList.innerHTML = "";
+      for (const [feature, val] of Object.entries(data.shap)) {
+        const div = document.createElement("div");
+        div.className = "shap-item";
+        const formattedVal = val >= 0 ? `+${val.toFixed(3)}s` : `${val.toFixed(3)}s`;
+        div.innerHTML = `
+          <span class="shap-name">${feature.replace(/_/g, " ")}:</span>
+          <span class="shap-val ${val >= 0 ? "loss" : "gain"}">${formattedVal}</span>
+        `;
+        shapList.appendChild(div);
+      }
+    } else {
+      shapContainer.style.display = "none";
+    }
+  }
 
   // Plot Degradation Curves
   const curves = data.degradation_curves || {};
@@ -487,7 +604,7 @@ function renderTyreView(data) {
 // ----------------------------------------------------
 async function loadBacktestView() {
   try {
-    const res = await fetch("/api/backtest");
+    const res = await fetch(`/api/backtest?engine=${state.backtestEngine}`);
     if (res.ok) {
       const data = await res.json();
       renderBacktestView(data);
@@ -498,27 +615,46 @@ async function loadBacktestView() {
 }
 
 function renderBacktestView(data) {
-  document.getElementById("bt-improved-count").textContent = `${data.strategies_improved} / ${data.total_evaluations}`;
-  document.getElementById("bt-success-rate").textContent = `${data.success_rate_pct.toFixed(1)}%`;
-  document.getElementById("bt-avg-delta").textContent = `+${data.average_position_gain.toFixed(1)} POS`;
+  // Sync backtest engine selector buttons
+  document.querySelectorAll(".bt-engine-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.engine === state.backtestEngine);
+  });
+
+  const engineLabels = {
+    search: "CALIBRATED · MC SEARCH",
+    gametheory: "CALIBRATED · GAME THEORY",
+    rl: "CALIBRATED · RL POLICY",
+  };
+  const badge = document.getElementById("bt-engine-badge");
+  if (badge) {
+    badge.textContent = engineLabels[state.backtestEngine] || `CALIBRATED · ${state.backtestEngine.toUpperCase()}`;
+  }
+
+  document.getElementById("bt-improved-count").textContent = `${data.strategies_improved || 0} / ${data.total_evaluations || 0}`;
+  document.getElementById("bt-success-rate").textContent = `${(data.success_rate_pct || 0).toFixed(1)}%`;
+  document.getElementById("bt-avg-delta").textContent = `${(data.average_position_gain || 0) >= 0 ? "+" : ""}${(data.average_position_gain || 0).toFixed(1)} POS`;
 
   const tbody = document.getElementById("backtest-body");
   tbody.innerHTML = "";
 
   (data.details || []).forEach((row) => {
     const tr = document.createElement("tr");
-    const isAdvantage = row.verdict.includes("BEAT") || row.verdict.includes("ADVANTAGE");
+    const verdict = row.verdict || "MATCHED";
+    const isAdvantage = verdict.includes("BEAT") || verdict.includes("ADVANTAGE") || verdict.includes("IMPROVED");
     if (isAdvantage) tr.classList.add("highlighted");
 
+    const aiTyre = row.ai_tyre || "MEDIUM";
+    const regretInfo = row.regret_vs_hindsight != null ? ` (${row.regret_vs_hindsight.toFixed(1)} regret)` : "";
+
     tr.innerHTML = `
-      <td><strong>${row.circuit}</strong></td>
-      <td><strong>${row.driver}</strong></td>
-      <td>Lap ${row.decision_lap}</td>
-      <td>${row.actual_action}</td>
-      <td>P ${row.actual_finish}</td>
-      <td><span class="tyre-badge ${row.ai_tyre}">${row.ai_action}</span></td>
-      <td>P ${row.ai_expected_position}</td>
-      <td><span class="badge ${isAdvantage ? 'live' : ''}">${row.verdict}</span></td>
+      <td><strong>${row.circuit || row.race_id || "Race"}</strong></td>
+      <td><strong>${row.driver || "VER"}</strong></td>
+      <td>Lap ${row.decision_lap != null ? row.decision_lap : "--"}</td>
+      <td>${row.actual_action || "BOX"}</td>
+      <td>P ${row.actual_finish != null ? row.actual_finish : "--"}</td>
+      <td><span class="tyre-badge ${aiTyre}">${row.ai_action || "BOX"}</span></td>
+      <td>P ${row.ai_expected_position != null ? row.ai_expected_position.toFixed(1) : "--"}</td>
+      <td><span class="badge ${isAdvantage ? 'live' : ''}">${verdict}${regretInfo}</span></td>
     `;
     tbody.appendChild(tr);
   });

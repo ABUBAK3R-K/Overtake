@@ -116,6 +116,7 @@
         <div class="panel leaderboard-panel">
           <div class="panel-header">
             <h3>LIVE LEADERBOARD</h3>
+            <span class="click-tip">💡 Click row to focus</span>
             <span class="badge" id="field-count-badge">20 DRIVERS</span>
           </div>
           <div class="table-responsive">
@@ -159,9 +160,31 @@
             <span class="confidence-badge" id="strategy-confidence">CONFIDENCE: 88%</span>
           </div>
           
+          <!-- Engine Selector Bar (FR-7 Engines 1-3) -->
+          <div class="engine-selector-bar">
+            <span class="selector-sublabel">REASONING ENGINE:</span>
+            <div class="engine-toggle-group">
+              <button class="engine-toggle-btn active" data-engine="search" id="engine-btn-search" title="Exhaustive candidate search via forward Monte Carlo simulation">
+                <span class="engine-title">MC SEARCH</span>
+                <span class="engine-desc">Exhaustive</span>
+              </button>
+              <button class="engine-toggle-btn" data-engine="gametheory" id="engine-btn-gametheory" title="Stackelberg competitor-aware game theory optimization">
+                <span class="engine-title">GAME THEORY</span>
+                <span class="engine-desc">Stackelberg Rival</span>
+              </button>
+              <button class="engine-toggle-btn" data-engine="rl" id="engine-btn-rl" title="Trained PPO Actor-Critic policy with offline roll-out evaluation">
+                <span class="engine-title">RL POLICY</span>
+                <span class="engine-desc">PPO Agent</span>
+              </button>
+            </div>
+          </div>
+
           <div class="recommendation-hero">
-            <div class="hero-action-badge" id="rec-action-badge">BOX THIS LAP</div>
-            <div class="hero-compound-badge hard" id="rec-tyre-badge">FOR HARD</div>
+            <div class="hero-badges-row">
+              <div class="hero-action-badge" id="rec-action-badge">BOX THIS LAP</div>
+              <div class="hero-compound-badge hard" id="rec-tyre-badge">FOR HARD</div>
+              <div class="hero-engine-badge" id="rec-engine-badge">ENGINE: MC SEARCH</div>
+            </div>
             <div class="hero-metrics">
               <div class="metric-card">
                 <span class="label">EXPECTED GAIN</span>
@@ -306,6 +329,14 @@
                 <div class="health-bar-fill" id="tyre-health-fill" style="width: 55%;"></div>
               </div>
             </div>
+
+            <!-- SHAP Explainability Breakdown -->
+            <div class="shap-factors-container" id="tyre-shap-container">
+              <label class="shap-label">PACE LOSS FACTORS (SHAP):</label>
+              <div class="shap-list" id="tyre-shap-list">
+                <!-- Dynamically populated -->
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -372,9 +403,16 @@
     <section id="view-backtest" class="view-panel">
       <div class="backtest-grid">
         <div class="panel backtest-summary-card">
-          <div class="panel-header">
-            <h3>2023 SEASON STRATEGY AUDIT SUMMARY</h3>
-            <span class="badge live">CALIBRATED</span>
+          <div class="panel-header backtest-header-wrap">
+            <div class="header-title-group">
+              <h3>2023 SEASON STRATEGY AUDIT SUMMARY</h3>
+              <span class="badge live" id="bt-engine-badge">CALIBRATED · MC SEARCH</span>
+            </div>
+            <div class="backtest-engine-selector" role="group" aria-label="Backtest Engine Selector">
+              <button class="bt-engine-btn active" data-engine="search">MC SEARCH</button>
+              <button class="bt-engine-btn" data-engine="gametheory">GAME THEORY</button>
+              <button class="bt-engine-btn" data-engine="rl">RL POLICY</button>
+            </div>
           </div>
           <div class="hero-metrics">
             <div class="metric-card">
