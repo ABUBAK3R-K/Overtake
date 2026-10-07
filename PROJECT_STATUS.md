@@ -7,7 +7,8 @@
 > How to update: tick off finished items, move "Next up", add any new
 > decisions/issues, and add one line to the Change Log at the bottom.
 
-**Last updated:** 2026-10-02 · Created clean, streamlined PROJECT_SCOPE.md optimizing project requirements and scope definition. · Frontend multi-engine selection & UI polish complete. Wired Strategy Optimizer and Calendar Backtest dashboard views to support all 3 FR-7 reasoning engines (`search`, `gametheory`, `rl`), rendered active engine badges and live backtest summaries by engine, integrated SHAP tyre degradation pace loss explanations, enabled click-to-focus on the live leaderboard with dynamic driver synchronization, and added keyboard navigation shortcuts for lap replay. All tests passing. · Full build Phase 7 (FR-7 Engines 2–3, FR-8 three-engine backtest) done · Phase 6 (FR-6 Monte Carlo + FR-7 Strategy Engine 1) done · Phase 5 (FR-5 safety car model & bunching) done · Phase 4 (FR-4 replay engine) done · Phase 3 (FR-3 lap-time model) done · Phase 2 (tyre model) done · Phase 1 (multi-season data) done
+**Last updated:** 2026-10-07 · Full build Phase 6 (FR-6 Monte Carlo simulation engine & distribution modeling) updated: high-throughput vectorized forward rollouts (≥1000 samples in <1s), complete PMF outcome distributions, percentiles (p10/p25/p50/p75/p90/IQR), 95% confidence intervals, lap-by-lap trajectory ribbons, pit execution tail risk, updated strategy optimizer, and full multi-engine support (FR-7 search, gametheory, rl) across backend and frontend. · All tests passing.
+
 
 ---
 
@@ -304,6 +305,8 @@ tracking in Section 3, which is now historical (both lanes are being built solo)
 Newest first. One line per commit: `date · who · what changed`.
 
 | Date | Who | Change |
+| --- | --- | --- |
+| 2026-10-07 | Abubaker | Phase 6 (FR-6): High-throughput Monte Carlo simulation engine with >=1000 samples, fast vectorized rollouts (<1s), full finishing PMF distributions, percentiles (p10/p25/p50/p75/p90/IQR), 95% confidence intervals, lap-by-lap trajectory ribbons, pit execution tail risk, strategy optimizer integration, API route updates, and comprehensive test suite (tests/test_monte_carlo_fr6.py). 164+ passed tests |
 | 2026-10-02 | Abubaker | Documentation: create streamlined PROJECT_SCOPE.md removing extraneous sprint plan and meta details |
 | 2026-09-29 | Abubaker | Frontend UI polish & engine controls: wire multi-engine selector (`search`, `gametheory`, `rl`) across Strategy Optimizer and Calendar Backtest views; add SHAP feature pace loss factor breakdown to Tyre Degradation panel; support interactive leaderboard click-to-focus driver selection with dynamic grid sync; add keyboard navigation (arrows and space) for lap replay |
 | 2026-09-23 | Abubaker | Phase 7 (FR-7 Engine 3): Document PPO policy benchmark results (mean regret 0.30 positions, 61% best action on held-out test races) and checkpoint recommendations in PROJECT_STATUS.md |

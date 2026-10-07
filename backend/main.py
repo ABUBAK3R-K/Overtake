@@ -257,10 +257,10 @@ def get_strategy(
     race_id: str,
     lap: int,
     driver: Optional[str] = Query(default=None),
-    sims: int = Query(default=200, ge=20, le=1000),
+    sims: int = Query(default=500, ge=20, le=5000),
     engine: str = Query(default="search", pattern="^(search|gametheory|rl)$"),
 ) -> dict[str, Any]:
-    """Return strategy recommendation for a driver.
+    """Return strategy recommendation for a driver (FR-6 / FR-7).
 
     ``?engine=search`` (default) — exhaustive candidate search via Monte Carlo.
     ``?engine=gametheory`` — Stackelberg competitor-aware game theory.
@@ -307,9 +307,9 @@ def get_simulation(
     driver: Optional[str] = Query(default=None),
     pit_lap: Optional[int] = Query(default=None),
     compound: Optional[str] = Query(default=None),
-    sims: int = Query(default=300, ge=50, le=1000),
+    sims: int = Query(default=1000, ge=50, le=5000),
 ) -> dict[str, Any]:
-    """Return Monte Carlo finishing probability distribution for custom or baseline strategy."""
+    """Return Monte Carlo finishing probability distribution (>=1000 samples) for custom or baseline strategy (FR-6)."""
     try:
         state = build_state_at_lap(race_id, lap)
         target_driver = driver or ("VER" if "VER" in state.positions else next(iter(state.positions.keys()), "VER"))

@@ -400,9 +400,13 @@ def shap_values_for(compound: str, age: int, circuit: str,
 
     Uses XGBoost's exact TreeSHAP via ``TyreModel.shap_values()`` — no extra
     ``shap`` package dependency at runtime. Falls back to an empty dict if the
-    default model is not the pooled variant (e.g. per-compound model).
+    default model is not the pooled variant (e.g. per-compound model) or not on disk.
     """
-    model = _default_model()
+    try:
+        model = _default_model()
+    except (FileNotFoundError, Exception):
+        return {}
+
     # For RoutedTyreModel use the pooled 'known' sub-model; for a plain
     # TyreModel use it directly (requires pooled variant).
     target: TyreModel | None = None

@@ -91,18 +91,26 @@ def generate_candidate_strategies(
 def get_strategy_recommendation(
     state: RaceState,
     target_driver: str = "VER",
-    n_sims: int = 300,
+    n_sims: int = 500,
 ) -> dict[str, Any]:
-    """Calculate the optimal pit/tyre strategy recommendation for target_driver.
+    """Calculate the optimal pit/tyre strategy recommendation for target_driver
+    across candidate strategies using Monte Carlo forward simulations (FR-6).
 
     Interface contract:
         Returns {
+            'target_driver': str,
             'action': str,
             'tyre': str,
             'pit_lap': int | None,
             'expected_gain': float,
             'confidence': float,
             'expected_position': float,
+            'position_std': float,
+            'win_prob': float,
+            'podium_prob': float,
+            'points_prob': float,
+            'percentiles': dict,
+            'ci_95': list[float],
             'candidates': list[dict],
             'reasoning': str,
         }
@@ -122,10 +130,15 @@ def get_strategy_recommendation(
         cand_data = {
             **candidate,
             "expected_position": sim_res["expected_position"],
+            "position_std": sim_res["position_std"],
             "win_prob": sim_res["win_prob"],
             "podium_prob": sim_res["podium_prob"],
+            "points_prob": sim_res["points_prob"],
+            "percentiles": sim_res["percentiles"],
+            "ci_95": sim_res["ci_95_expected_pos"],
             "finish_prob_by_position": sim_res["finish_prob_by_position"],
             "expected_time": sim_res["expected_time"],
+            "time_std": sim_res["time_std"],
         }
         evaluated_candidates.append(cand_data)
         if candidate["name"] == "STAY_OUT":
@@ -182,8 +195,12 @@ def get_strategy_recommendation(
         "expected_gain": expected_gain,
         "confidence": confidence,
         "expected_position": best_candidate["expected_position"],
+        "position_std": best_candidate["position_std"],
         "win_prob": best_candidate["win_prob"],
         "podium_prob": best_candidate["podium_prob"],
+        "points_prob": best_candidate["points_prob"],
+        "percentiles": best_candidate["percentiles"],
+        "ci_95": best_candidate["ci_95"],
         "reasoning": reasoning,
         "candidates": evaluated_candidates,
         # The full chosen plan (a two-stop keeps both stops, unlike pit_lap/tyre).
