@@ -6,6 +6,7 @@ Monte Carlo Simulation, Strategy Optimization, and Backtesting.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -248,6 +249,8 @@ def get_lap_prediction(
             res["interaction_context"] = interaction_context
         return res
     except Exception as e:
+        if isinstance(e, FileNotFoundError):
+            raise HTTPException(status_code=503, detail=str(e))
         log.exception("Error predicting lap time for %s %s: %s", race_id, driver, e)
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -276,10 +279,12 @@ def get_strategy(
         )
 
         if engine == "gametheory":
+            # Simulates ~5 rival replies per candidate jointly; sims // 5 per
+            # pair keeps its total budget level with search's.
             rec = get_strategy_recommendation_gametheory(
                 state, rival_state=state,
                 target_driver=target_driver,
-                n_sims=sims,
+                n_sims=max(20, sims // 5),
             )
         elif engine == "rl":
             rec = get_strategy_recommendation_rl(
@@ -363,6 +368,65 @@ def get_backtest_engine_comparison() -> dict[str, Any]:
     return summarize_multi_engine_backtest(multi)
 
 
+MODELS_DIR = Path(__file__).resolve().parents[1] / "data" / "models"
+
+
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+@app.get("/api/evaluation/backtest")
+def get_fair_backtest_report() -> dict[str, Any]:
+    """The full-dataset three-engine backtest (FR-8), as last run by
+    `scripts/run_full_backtest.py`: summary tables plus one row per decision
+    point. Read from disk; running it takes hours, so it is never triggered here.
+    """
+    summary = _read_json(MODELS_DIR / "backtest" / "dataset_report.json")
+    if summary is None:
+        raise HTTPException(status_code=404, detail="no backtest report; run scripts/run_full_backtest.py")
+    points = []
+    checkpoint = MODELS_DIR / "backtest" / "fair_checkpoint.jsonl"
+    if checkpoint.exists():
+        for line in checkpoint.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line) if line.strip() else {}
+            if "engines" not in row:
+                continue
+            points.append({
+                "race_id": row["race_id"], "driver": row["driver"],
+                "decision_lap": row["decision_lap"], "circuit": row.get("circuit"),
+                "hindsight_best": row.get("hindsight_best", {}).get("name"),
+                "real": {
+                    "pit_laps": ((row.get("real") or {}).get("strategy") or {}).get("pit_laps"),
+                    "compounds": ((row.get("real") or {}).get("strategy") or {}).get("compounds"),
+                    "expected_position": (row.get("real") or {}).get("expected_position"),
+                    "regret": (row.get("real") or {}).get("regret"),
+                },
+                "actual_finish": row.get("actual_finish"),
+                "engines": {
+                    e: {"strategy": (v.get("strategy") or {}).get("name"),
+                        "expected_position": v.get("expected_position"), "regret": v.get("regret")}
+                    for e, v in row["engines"].items()
+                },
+            })
+    return {"summary": summary, "points": points}
+
+
+@app.get("/api/evaluation/models")
+def get_models_summary() -> dict[str, Any]:
+    """Held-out evaluation numbers for every served model, read from the
+    reports the training/eval scripts write (nothing is recomputed here)."""
+    lap_meta = _read_json(MODELS_DIR / "lap_time" / "meta.json") or {}
+    return {
+        "tyre": _read_json(MODELS_DIR / "tyre" / "test_report.json"),
+        "lap_time": {
+            "metrics": lap_meta.get("metrics"),
+            "feature_importance": lap_meta.get("feature_importance"),
+        },
+        "lap_time_tracks": _read_json(MODELS_DIR / "lap_time" / "test_report.json"),
+        "rl_policy": _read_json(MODELS_DIR / "rl" / "policy_meta.json"),
+    }
+
+
 @app.get("/api/corner-analysis/{race_id}/{driver}/{lap}")
 def get_corner_analysis(
     race_id: str,
@@ -373,7 +437,8 @@ def get_corner_analysis(
 ) -> dict[str, Any]:
     """Per-corner time-loss breakdown for one driver's lap vs. a benchmark
     lap (PRD FR-9, Design.md Section 6.11). Defaults the benchmark to the
-    race's overall fastest lap if not given.
+    fastest lap set so far (as of `lap`, via the replay), never one from
+    later in the race.
 
     Loads a full FastF1 session on demand (cached in-process after the first
     call for a given race_id) rather than reading the ingested `telemetry`
@@ -382,10 +447,18 @@ def get_corner_analysis(
     local cache; later requests for the same race are fast.
     """
     try:
+        if benchmark_driver is None or benchmark_lap is None:
+            fastest = get_replay_session(race_id).seek(lap).fastest_lap or {}
+            if not fastest.get("driver"):
+                raise HTTPException(status_code=404, detail=f"no timed lap yet at lap {lap}")
+            benchmark_driver = benchmark_driver or fastest["driver"]
+            benchmark_lap = benchmark_lap or int(fastest["lap"])
         return analyze_driver_lap_vs_benchmark(
             race_id, driver, lap,
             benchmark_driver=benchmark_driver, benchmark_lap=benchmark_lap,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         log.exception("Error running corner analysis for %s %s lap %d", race_id, driver, lap)
         raise HTTPException(status_code=500, detail=str(e))
