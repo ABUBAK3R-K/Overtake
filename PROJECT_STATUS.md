@@ -7,7 +7,7 @@
 > How to update: tick off finished items, move "Next up", add any new
 > decisions/issues, and add one line to the Change Log at the bottom.
 
-**Last updated:** 2026-10-07 · Full build Phase 6 (FR-6 Monte Carlo simulation engine & distribution modeling) updated: high-throughput vectorized forward rollouts (≥1000 samples in <1s), complete PMF outcome distributions, percentiles (p10/p25/p50/p75/p90/IQR), 95% confidence intervals, lap-by-lap trajectory ribbons, pit execution tail risk, updated strategy optimizer, and full multi-engine support (FR-7 search, gametheory, rl) across backend and frontend. · All tests passing.
+**Last updated:** 2026-10-11 · Monte Carlo uses the lap-time model again (batched, common random numbers); game theory is a real Stackelberg game; lap-time model retrained on all 112 races; RL retrained (now loses to always-stay-out on held-out races); dashboard rebuilt to Design.md §10; Docker files written (not built: no Docker here); full 112-race backtest running. 191 tests passing.
 
 
 ---
@@ -223,6 +223,86 @@ exposes every table folder as a DuckDB view. Partner's tables should use the sam
 Full-build phase tracking (PRD.md §8 build order) — this supersedes the two-lane sprint-day
 tracking in Section 3, which is now historical (both lanes are being built solo).
 
+### Session 2026-10-10/11: finishing Phase 7, Phases 9–11
+
+Plan was: full backtest (Phase 7) → dashboard design pass (9) → Docker (10) → docs (11). Before the
+backtest could mean anything, five problems underneath it had to be fixed:
+
+1. **The Monte Carlo had stopped using the lap-time model (regression in f9c6184, 10-07).** The FR-6
+   rewrite built `lap_time_predictor` but never called it; pace was "last lap time + tyre wear" held for
+   the rest of the race (no fuel burn-off, no soft/hard pace difference, and an SC or pit lap at the
+   decision point baked in for every remaining lap). That was the source of its "<1 s for 1000 sims".
+   Fixed: `LapTimePredictor.predict_arrays()` (vectorized, identical to `predict_many()`, tested) is
+   the primary pace source again; last-lap + wear is only the fallback. Regression test
+   `test_monte_carlo_uses_lap_time_model`. The FR-6 speed test's budget is now 8 s (measured ~3.5 s for
+   1000 sims × 8 cars × 32 laps; XGBoost inference is most of it).
+2. **Batched Monte Carlo.** `run_monte_carlo_batch(state, scenarios, ...)` stacks every candidate plan
+   into one simulation, one model call per lap for all of them, with common random numbers (sim *i* of
+   every plan sees the same SC, noise and rival draws). A batch scenario equals the single run with the
+   same seed (tested). Optimizer, game theory, RL and the backtest re-score use it: a 6-candidate search
+   went 43.8 s → 5.8 s with identical numbers. Single-run 1000 sims: 6.5 s vs 18.9 s for the
+   pre-10-07 simulator.
+3. **Game theory was identical to search by construction.** It scored the same candidates with the
+   same `run_monte_carlo` call and seed; the rival's "best response" was display-only, and the rival
+   was P1, not the nearest car. Now a real Stackelberg game: rival = car directly ahead (car behind for
+   the leader); `run_monte_carlo(..., rival_strategies={rival: plan})` fixes the rival's plan inside a
+   joint simulation; for each of our plans the rival's best reply is re-solved, and we pick the plan
+   that is best after it. Differs from search on 2 of 8 sampled real decisions. API gives it
+   `sims // 5` per (plan, reply) pair so its budget matches search's.
+4. **The lap-time model driving the simulator had only ever been trained on the original 8 races**
+   (booster dated 09-18). Retrained on all 112. `python -m src.models.lap_time` now scores the frozen
+   split's 14 test races (trained on the other 98) instead of 112 leave-one-out fits, then trains on all.
+   Held-out, next lap: **0.69 s vs 0.95 s** repeat-recent-pace baseline (dry races 0.49 vs 0.59);
+   1–30 laps ahead: **1.18 s vs 1.89 s**. Worst: Monaco 2022/2023 (1.39/1.36), Japan 2024 (1.29),
+   Canada 2024 (1.06). Old model archived in `data/models/lap_time/archive_2026-09-18/`.
+5. **RL policy retrained on the corrected simulator** (old one archived in
+   `data/models/rl/archive_2026-09-23/`). Unflattering result, held-out 59 states from the 14 test races:
+
+   | Policy | Mean regret | Picked best |
+   | --- | --- | --- |
+   | Always stay out | **0.47** | 49% |
+   | PPO policy | 0.61 | 53% |
+   | Random | 1.19 | 19% |
+
+   On training states the policy scores 0.22, so it overfits. The September result (PPO 0.30 vs stay-out
+   1.94) was an artefact of the 8-race pace model, which made staying out look terrible (the "always pit
+   SOFT scores suspiciously well" note above); with the better model that bias is gone and so is the
+   policy's edge. Not tuned against the test races (frozen split). Proposed fix: early stopping /
+   model selection on a validation split carved from the training races.
+
+Also fixed:
+- **Corner analysis leaked the future:** with no benchmark given it used the race's overall fastest
+  lap (e.g. lap 50 when replaying lap 20). Now defaults to the fastest lap set so far (replay state,
+  as of lap N); test asserts `benchmark_lap <= lap`.
+- **`?model=gnn` served an untrained network:** `LapTimeGNNModel.load()` silently returned a randomly
+  initialised model when no checkpoint existed, and `data/models/lap_time_gnn/` has never existed.
+  Now raises (API answers 503 "train one with ..."); added `python -m src.models.lap_time_gnn` to train
+  the served GNN. GRU/GNN held-out scoring (`scripts/run_lap_time_eval.py`) has also never been run;
+  both are queued after the backtest (CPU-bound).
+- Engine explanations: search's "why" was canned text unrelated to the numbers ("degrading rapidly",
+  "cannot be recovered"); now built from what was simulated (`describe_plan`, `explain_choice`), shared
+  by all three engines.
+
+**Phase 9 — dashboard rebuilt to Design.md §10** (`frontend/dist/`): tokens as CSS variables exactly as
+specified (graphite surfaces, FIA tyre colours, purple/green timing deltas only), Archivo for UI and
+JetBrains Mono only for tabular numbers; pit-wall layout (timing tower left, focus area centre, the
+strategy call right as the one loud element: inverted header, timestamped, stale-call warning); all six
+views plus Backtest. New: Driver/corner view (was missing), Models view reads real held-out numbers from
+disk (was hard-coded September numbers) via `GET /api/evaluation/models`, Backtest view shows the fair
+three-engine report via `GET /api/evaluation/backtest`, game theory's rival reply per plan, simulation
+ribbon from `trajectory_bands`, deep links (`#race=…&lap=…&driver=…&view=…&engine=…`). Heavy views only
+compute when paused and keep their last render (dimmed) while recomputing. Engine colours validated with
+the dataviz CVD checker on the panel surface. Screenshotted every view and fixed what looked wrong
+(SHAP "bias" shown as a feature, label collisions, blocky ribbon, raw IDs in reasoning, a "confidence"
+that was really podium probability).
+
+**Phase 10 — Docker:** `Dockerfile` (python 3.13-slim, CPU-only torch, data/processed + data/models
+baked in), `docker-compose.yml` (one command, FastF1 cache mounted for the Driver view),
+`.dockerignore`. **Not built or run: Docker is not installed on this machine.** Cloud host still TBD
+(PRD §13) — needs a decision.
+
+**Phase 11 — docs:** README rewritten (run, rebuild-from-scratch, views, demo walkthrough, architecture).
+
 1. **FR-2 loose end:** SHAP explainability was never wired up despite Phase 2 being marked done —
    `shap` is now installed; add SHAP value output to the tyre model and surface it via
    `/api/tyre/...` for the Model view.
@@ -297,6 +377,9 @@ tracking in Section 3, which is now historical (both lanes are being built solo)
 | Lap-to-lap noise (SD 0.3–0.8 s) ≫ per-lap degradation (~0.05 s) | Single-lap tyre MAE will look poor | Evaluate the degradation curve over a stint as well as per-lap MAE |
 | Telemetry summaries on red-flag laps include the stoppage (n_samples 12k–15k) | Garbage speed/throttle features | Drop with the neutralised-lap filter |
 | `predict_*` handoff by Day 5–6 is the sprint's tightest dependency | Blocks partner Day 6 | Flag early if slipping |
+| Simulator results depend on a lap-time model that is weak at Monaco/Japan/Canada and in the wet (held-out next-lap 1.1–1.4 s there) | Backtest regret is only as good as the simulator | Backtest reports simulator-vs-reality calibration alongside regret |
+| RL policy overfits (train regret 0.22, held-out 0.61, worse than always-stay-out 0.47) | Engine 3 is currently the weakest engine | Model selection on a validation split of training races; never on the frozen test races |
+| Docker image never built (no Docker on the dev machine) | Phase 10 unverified | Build on a machine with Docker; then pick a cloud host (PRD §13) |
 
 ---
 
