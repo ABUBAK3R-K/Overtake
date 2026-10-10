@@ -163,3 +163,5 @@ def test_corner_analysis_api_endpoint():
     data = resp.json()
     assert data["n_corners"] > 0
     assert "corners" in data
+    # Default benchmark: the fastest lap so far, never a later lap (no leakage)
+    assert data["benchmark_lap"] <= 20

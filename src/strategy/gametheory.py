@@ -1,15 +1,24 @@
 """Strategy Engine 2 — Competitor-Aware Game Theory (Design.md Section 6.9 / FR-7).
 
-Implements a Stackelberg-style two-player model: this car is the leader and
-the rival is the follower. For each candidate strategy the leader considers,
-the follower picks their *best response* (the rival strategy that minimises
-*their* expected finishing position), and the leader's payoff is evaluated
-in that adversarial scenario.
+A Stackelberg leader/follower game between this car (the leader: it commits
+to a plan first) and its nearest rival (the follower: it sees the plan and
+answers it). Both plans are fixed inside one joint Monte Carlo simulation,
+which reports both cars' expected finishing positions at once:
 
-The leader then selects the candidate that produces the best expected outcome
-*after* the rival has optimally countered it.
+  for each of our candidates C:
+      for each rival option R:  joint sim(C, R) -> (our E[pos], rival E[pos])
+      R*(C) = the R that is best for the rival, given C
+      value(C) = our E[pos] under (C, R*(C))
+  pick argmin value(C)
 
-Return shape matches Engine 1 (exhaustive search) exactly:
+All joint simulations share one seed, so every comparison is paired.
+Everyone else on track follows the simulator's usual rival pit heuristic.
+
+This differs from Engine 1 (exhaustive search) exactly where a rival's
+reply changes the answer: e.g. an undercut that only works if the car
+ahead doesn't cover it.
+
+Return shape matches Engine 1:
     {action, tyre, pit_lap, expected_gain, confidence, engine, ...}
 so the API layer can render any engine identically.
 """
@@ -19,57 +28,40 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.simulation.monte_carlo import run_monte_carlo
+from src.models.lap_time import make_lap_time_predictor
+from src.simulation.monte_carlo import run_monte_carlo_batch
 from src.simulation.state import RaceState
-from src.strategy.optimizer import (
-    CANDIDATE_DRY_COMPOUNDS,
-    generate_candidate_strategies,
-)
+from src.strategy.optimizer import describe_plan, explain_choice, generate_candidate_strategies
 
 log = logging.getLogger("overtake.strategy.gametheory")
+
+# The rival's options: stay out, or box now / soon. Later stops barely
+# interact with a decision made now and would multiply the joint grid.
+RIVAL_OPTION_PREFIXES = ("STAY_OUT", "BOX_NOW_")
+RIVAL_MAX_OFFSET = 3
 
 # ─── Rival modelling ──────────────────────────────────────────────────────────
 
 
+def _nearest_rival(state: RaceState, target_driver: str) -> str | None:
+    """The car directly ahead (the one to undercut or defend against); the car
+    behind if the target leads."""
+    order = sorted(state.positions, key=state.positions.get)
+    if target_driver not in order or len(order) < 2:
+        return None
+    i = order.index(target_driver)
+    return order[i - 1] if i > 0 else order[1]
+
+
 def _rival_candidates(state: RaceState, rival_driver: str) -> list[dict[str, Any]]:
-    """Generate plausible rival strategies.
-
-    Delegates to the same generator used by Engine 1 so the rival's option set
-    is symmetric and consistent with the actual simulation model.
-    """
-    return generate_candidate_strategies(state, rival_driver)
-
-
-def _rival_best_response(
-    state: RaceState,
-    rival_driver: str,
-    rival_candidates: list[dict[str, Any]],
-    n_sims: int,
-) -> dict[str, Any]:
-    """Return the rival candidate that minimises *rival's* expected position.
-
-    This is the follower's best response in the Stackelberg game. We hold the
-    race state fixed (the leader hasn't moved yet) and score each rival option
-    independently — a simplification that avoids a full joint simulation.
-    """
-    best: dict[str, Any] | None = None
-    best_pos = float("inf")
-    for cand in rival_candidates:
-        try:
-            res = run_monte_carlo(
-                state=state,
-                strategy=cand,
-                target_driver=rival_driver,
-                n_sims=n_sims,
-            )
-            exp_pos = res["expected_position"]
-        except Exception:
-            exp_pos = float("inf")
-        if exp_pos < best_pos:
-            best_pos = exp_pos
-            best = {**cand, "expected_position": exp_pos}
-    return best or {"name": "STAY_OUT", "pit_laps": [], "compounds": [],
-                    "expected_position": 99.0}
+    """The rival's near-term options, from the same generator as Engine 1."""
+    out = []
+    for cand in generate_candidate_strategies(state, rival_driver):
+        pit_laps = cand.get("pit_laps", [])
+        soon = len(pit_laps) == 1 and pit_laps[0] - state.lap <= RIVAL_MAX_OFFSET
+        if cand["name"].startswith(RIVAL_OPTION_PREFIXES) or soon:
+            out.append(cand)
+    return out or [{"name": "STAY_OUT", "pit_laps": [], "compounds": []}]
 
 
 # ─── Public handoff function ──────────────────────────────────────────────────
@@ -85,112 +77,76 @@ def get_strategy_recommendation_gametheory(
 
     Interface contract (Design.md §5): returns
     ``{action, tyre, pit_lap, expected_gain, confidence, engine, ...}``
-    identical shape to Engine 1.
+    identical shape to Engine 1, plus ``rival_driver`` and, per candidate,
+    the rival's best response to it.
 
     Args:
-        state:         Current race state used to simulate the target driver.
-        rival_state:   Race state used to model the rival's decision. Can be
-                       the same object as ``state`` (rival shares the state).
+        state:         Current race state used for the joint simulation.
+        rival_state:   Race state the rival's options are generated from
+                       (usually the same object as ``state``).
         target_driver: The driver to optimise for. Defaults to the leader of
                        ``state.positions`` if omitted.
-        n_sims:        Monte Carlo simulations per candidate per player.
-
-    Algorithm (simplified Stackelberg — see note below):
-          1. Compute the rival's best response R* — the rival strategy that
-             minimises *their* expected position. Under this model R* does not
-             depend on the leader's candidate C (the rival's payoff is scored
-             from `rival_state` alone, not a joint simulation), so it is
-             computed once and reused as context for every candidate.
-          2. For each candidate C the target_driver can make, score C by running
-             MC from the *target driver's* perspective, with R* attached to the
-             result for display/reasoning.
-        Choose C* = argmin expected_position(C).
-
-        This is a real simplification (a true Stackelberg leader-follower
-        simulation would re-score the rival's response conditional on each C),
-        but it is a legitimate first cut: it still surfaces what the rival is
-        likely to do and reports it alongside the recommendation, and it's an
-        order of magnitude cheaper than a joint search over both players'
-        candidate sets.
+        n_sims:        Monte Carlo simulations per (our plan, rival plan) pair.
     """
-    # Determine target and rival drivers
     sorted_positions = sorted(state.positions, key=lambda d: state.positions[d])
     if target_driver is None:
         target_driver = sorted_positions[0] if sorted_positions else "VER"
 
-    # Pick the nearest rival in track position (closest ahead or behind)
-    rival_driver: str | None = None
-    target_pos = state.positions.get(target_driver, 1)
-    for d in sorted_positions:
-        if d != target_driver:
-            rival_driver = d
-            break
-
+    rival_driver = _nearest_rival(state, target_driver)
     if rival_driver is None:
-        # No rival available — fall back to exhaustive search
         log.warning("No rival driver found; falling back to exhaustive search.")
         from src.strategy.optimizer import get_strategy_recommendation
         result = get_strategy_recommendation(state, target_driver=target_driver, n_sims=n_sims)
         result["engine"] = "gametheory"
         return result
 
-    log.debug("Gametheory: target=%s rival=%s", target_driver, rival_driver)
+    try:
+        predictor = make_lap_time_predictor(state.race_id, state.lap)
+    except Exception:
+        predictor = None  # run_monte_carlo falls back to recent pace + wear
 
-    # Pre-compute rival candidates and the rival's best response once — under
-    # this model neither depends on the leader's candidate (see docstring), so
-    # computing it inside the per-candidate loop below would just repeat the
-    # same ~len(rival_candidates) Monte Carlo calls once per leader candidate
-    # for an identical answer every time.
-    rival_candidates = _rival_candidates(rival_state, rival_driver)
-    rival_response = _rival_best_response(
-        rival_state, rival_driver, rival_candidates, n_sims=max(20, n_sims // 4)
-    )
-
-    leader_candidates = generate_candidate_strategies(state, target_driver)
+    rival_options = _rival_candidates(rival_state, rival_driver)
+    leader_options = generate_candidate_strategies(state, target_driver)
+    # The whole (our plan x rival plan) grid in one batched joint simulation
+    grid = [(c, r) for c in leader_options for r in rival_options]
+    try:
+        results = run_monte_carlo_batch(
+            state, [{"strategy": c, "rival_strategies": {rival_driver: r}} for c, r in grid],
+            target_driver=target_driver, n_sims=n_sims, lap_time_predictor=predictor,
+        )
+    except Exception as exc:
+        log.warning("joint Monte Carlo failed: %s", exc)
+        results = []
 
     evaluated: list[dict[str, Any]] = []
-    baseline_result: dict[str, Any] | None = None
-
-    for leader_cand in leader_candidates:
-        # Evaluate the leader's strategy, with the rival's best response
-        # attached below for display/reasoning (see docstring simplification
-        # note — the rival effect on pace comes from monte_carlo's own
-        # rival-pit heuristic, not from injecting rival_response directly).
-        try:
-            sim_res = run_monte_carlo(
-                state=state,
-                strategy=leader_cand,
-                target_driver=target_driver,
-                n_sims=n_sims,
-            )
-        except Exception as exc:
-            log.warning("MC failed for candidate %s: %s", leader_cand["name"], exc)
-            continue
-
-        cand_data = {
-            **leader_cand,
-            "expected_position": sim_res["expected_position"],
-            "win_prob": sim_res["win_prob"],
-            "podium_prob": sim_res["podium_prob"],
-            "finish_prob_by_position": sim_res["finish_prob_by_position"],
-            "expected_time": sim_res["expected_time"],
-            "rival_response": rival_response.get("name", "STAY_OUT"),
-            "rival_expected_position": rival_response.get("expected_position", 99.0),
-        }
-        evaluated.append(cand_data)
-        if leader_cand["name"] == "STAY_OUT":
-            baseline_result = cand_data
+    n_r = len(rival_options)
+    for k, cand in enumerate(leader_options if results else []):
+        responses = [
+            (res["expected_position_by_driver"].get(rival_driver, 99.0), rival_plan, res)
+            for rival_plan, res in zip(rival_options, results[k * n_r:(k + 1) * n_r])
+        ]
+        # Follower's best response to this plan (first listed wins ties)
+        rival_pos, rival_plan, res = min(responses, key=lambda r: r[0])
+        evaluated.append({
+            **cand,
+            "expected_position": res["expected_position"],
+            "win_prob": res["win_prob"],
+            "podium_prob": res["podium_prob"],
+            "finish_prob_by_position": res["finish_prob_by_position"],
+            "expected_time": res["expected_time"],
+            "rival_response": rival_plan["name"],
+            "rival_expected_position": rival_pos,
+            # Our E[pos] against each rival option, for the "why" in the UI
+            "vs_rival_options": {r[1]["name"]: r[2]["expected_position"] for r in responses},
+        })
 
     if not evaluated:
-        # Absolute fallback
         from src.strategy.optimizer import get_strategy_recommendation
         result = get_strategy_recommendation(state, target_driver=target_driver, n_sims=n_sims)
         result["engine"] = "gametheory"
         return result
 
-    if baseline_result is None:
-        baseline_result = evaluated[0]
-
+    baseline_result = next((c for c in evaluated if c["name"] == "STAY_OUT"), evaluated[0])
     best = min(evaluated, key=lambda c: c["expected_position"])
     baseline_pos = baseline_result["expected_position"]
     expected_gain = round(baseline_pos - best["expected_position"], 2)
@@ -207,22 +163,12 @@ def get_strategy_recommendation_gametheory(
     pit_laps = best.get("pit_laps", [])
     pit_lap = pit_laps[0] if pit_laps else None
 
-    # Build reasoning including rival information
-    rival_response_name = best.get("rival_response", "STAY_OUT")
-    current_comp, current_age = state.tyres.get(target_driver, ("MEDIUM", 1))
-    if action == "STAY OUT":
-        reasoning = (
-            f"Rival ({rival_driver}) best response is {rival_response_name}. "
-            f"Staying out on {current_comp} (age {current_age}) is optimal even after "
-            f"accounting for rival's counter-move."
-        )
-    else:
-        reasoning = (
-            f"Rival ({rival_driver}) best response is {rival_response_name}. "
-            f"Pitting for {tyre} at lap {pit_lap} still yields expected P"
-            f"{best['expected_position']:.1f} (+{expected_gain:+.1f} vs stay-out) "
-            f"in the most adversarial scenario."
-        )
+    rival_plan = next((r for r in rival_options if r["name"] == best["rival_response"]), {})
+    reasoning = (
+        f"{rival_driver} answers best by choosing to {describe_plan(rival_plan, state.lap)}. "
+        + explain_choice(best, evaluated, state.lap)
+        + " Every position here is after the rival's best answer to that plan."
+    )
 
     return {
         "target_driver": target_driver,

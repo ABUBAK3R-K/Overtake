@@ -110,7 +110,7 @@ def score_state(race_id: str, driver: str, lap: int, n_sims: int, seed: int) -> 
     """Monte Carlo every action at one decision state. Returns None for states
     the policy can't act on (driver retired/absent, wet tyres, race over)."""
     from src.models.lap_time import make_lap_time_predictor
-    from src.simulation.monte_carlo import run_monte_carlo
+    from src.simulation.monte_carlo import run_monte_carlo_batch
     from src.simulation.replay import build_state_at_lap
 
     state = build_state_at_lap(race_id, lap)
@@ -125,11 +125,11 @@ def score_state(race_id: str, driver: str, lap: int, n_sims: int, seed: int) -> 
         predictor = None
 
     expected, dists = [], []
-    for a in range(N_ACTIONS):
-        res = run_monte_carlo(
-            state, action_strategy(a, state.lap), target_driver=driver,
-            n_sims=n_sims, lap_time_predictor=predictor, seed=seed,
-        )
+    batch = run_monte_carlo_batch(
+        state, [{"strategy": action_strategy(a, state.lap)} for a in range(N_ACTIONS)],
+        target_driver=driver, n_sims=n_sims, lap_time_predictor=predictor, seed=seed,
+    )
+    for res in batch:
         expected.append(float(res["expected_position"]))
         dists.append([[int(p), float(q)] for p, q in res["finish_prob_by_position"].items()])
 

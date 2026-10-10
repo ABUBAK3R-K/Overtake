@@ -372,8 +372,10 @@ class LapTimeGNNModel:
     def load(cls, directory: Path = MODEL_DIR) -> "LapTimeGNNModel":
         meta_path = directory / "meta.json"
         if not meta_path.exists():
-            # Return fresh initialized model if no checkpoint saved yet
-            return cls()
+            # Never fall back to an untrained network: its "predictions" are noise
+            raise FileNotFoundError(
+                f"no GNN lap-time model at {directory}; train one with `python -m src.models.lap_time_gnn`"
+            )
         meta = json.loads(meta_path.read_text())
         model = cls(
             hidden_dim=meta["hidden_dim"],
@@ -396,3 +398,23 @@ def _default_gnn_model() -> LapTimeGNNModel:
 def predict_lap_time_gnn(graph: RaceGraph) -> dict[str, float]:
     """Interaction-aware prediction for all drivers at once (Design.md Section 5)."""
     return _default_gnn_model().predict_graph(graph)
+
+
+def main() -> int:
+    """Train the served GNN on every ingested race and save it to MODEL_DIR.
+    Held-out scoring against the other lap-time tracks is
+    scripts/run_lap_time_eval.py (frozen test split)."""
+    import sys
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    from src.models.lap_time import safety_car_ratio
+    from src.models.tyre import load_lap_frame
+    laps = load_lap_frame()
+    model = LapTimeGNNModel(hidden_dim=48, edge_dim=24, num_layers=2, sc_ratio=safety_car_ratio(laps))
+    model.fit(laps, epochs=15, verbose=True)
+    model.save(MODEL_DIR, metrics={"n_train_races": int(laps["race_id"].nunique())})
+    log.info("saved to %s", MODEL_DIR)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

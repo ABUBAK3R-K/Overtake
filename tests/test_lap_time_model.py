@@ -143,6 +143,37 @@ def test_single_field_and_batch_predictions_agree(laps, model):
     assert set(batch[1]) == set(later.positions)
 
 
+def test_array_predictions_match_batch_predictions(laps, model):
+    """predict_arrays() (Monte Carlo's array path) == predict_many() on the same states."""
+    race = laps[laps["race_id"] == "r1"]
+    predictor = LapTimePredictor("r1", 15, model=model, laps=laps)
+    states = [state_at(race, 15), state_at(race, 22, safety_car=True)]
+    states[1].tyres["D02"] = ("HARD", 0)  # a simulated stop
+    lap = 22
+    states[0].lap = lap  # same lap for both, as in one Monte Carlo step
+    drivers = sorted(states[0].positions)
+
+    arrays = predictor.predict_arrays(
+        lap, drivers,
+        np.array([[s.tyres[d][0] for d in drivers] for s in states]),
+        np.array([[s.tyres[d][1] for d in drivers] for s in states]),
+        np.array([[s.gaps[d] for d in drivers] for s in states]),
+        np.array([s.safety_car for s in states]),
+    )
+    batch = predictor.predict_many(states)
+    for i in range(len(states)):
+        assert arrays[i] == pytest.approx([batch[i][d] for d in drivers])
+
+    codes = np.array([[lap_time.COMPOUNDS.index(s.tyres[d][0]) for d in drivers] for s in states])
+    from_codes = predictor.predict_arrays(
+        lap, drivers, codes,
+        np.array([[s.tyres[d][1] for d in drivers] for s in states]),
+        np.array([[s.gaps[d] for d in drivers] for s in states]),
+        np.array([s.safety_car for s in states]),
+    )
+    assert from_codes == pytest.approx(arrays)
+
+
 def test_safety_car_scales_prediction(laps, model):
     race = laps[laps["race_id"] == "r1"]
     predictor = LapTimePredictor("r1", 15, model=model, laps=laps)

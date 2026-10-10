@@ -249,3 +249,14 @@ class TestStrategyEngineAPIParam:
         assert resp.status_code == 200
         data = resp.json()
         assert "shap" not in data
+
+
+def test_gametheory_rival_is_car_directly_ahead():
+    from src.simulation.state import RaceState
+    from src.strategy.gametheory import _nearest_rival
+    state = RaceState(race_id="x", lap=10, positions={"A": 1, "B": 2, "C": 3},
+                      gaps={"A": 0.0, "B": 1.0, "C": 2.0}, tyres={}, safety_car=False,
+                      total_laps=50, circuit="X")
+    assert _nearest_rival(state, "C") == "B"
+    assert _nearest_rival(state, "B") == "A"
+    assert _nearest_rival(state, "A") == "B"  # leader defends against P2

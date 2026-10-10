@@ -284,6 +284,13 @@ def _state_rows(states: list, total_laps: int) -> pd.DataFrame:
     return pd.DataFrame(cols).assign(total_laps=total_laps)
 
 
+def _compound_categorical(compounds) -> pd.Categorical:
+    compounds = np.asarray(compounds)
+    if np.issubdtype(compounds.dtype, np.integer):
+        return pd.Categorical.from_codes(compounds.ravel(), categories=COMPOUNDS)
+    return pd.Categorical(np.char.upper(compounds.astype(str)).ravel(), categories=COMPOUNDS)
+
+
 class LapTimePredictor:
     """predict_lap_time(state, driver) bound to one race and its real history.
 
@@ -333,6 +340,46 @@ class LapTimePredictor:
         for i, driver, value in zip(rows["state"], rows["driver"], pace.tolist()):
             out[i][driver] = value
         return out
+
+    def predict_arrays(self, lap: int, drivers: list[str], compounds: np.ndarray,
+                       ages: np.ndarray, gaps: np.ndarray, safety_car: np.ndarray) -> np.ndarray:
+        """predict_many() for array-shaped Monte Carlo state, without RaceState objects.
+
+        Every array describes the end of `lap` for n simulations x d drivers
+        (columns in `drivers` order): compounds (n, d) str, or int codes into
+        COMPOUNDS (faster for large batches), ages (n, d) tyre
+        age (the next lap runs at age + 1; 0 after a stop), gaps (n, d) gap to
+        leader in seconds; safety_car (n,) bool. Positions are the gap ranks.
+        Returns (n, d) predicted times for lap + 1, identical to predict_many()
+        on the equivalent states.
+        """
+        if lap < self.anchor_lap:
+            raise ValueError(f"state at lap {lap} is before this predictor's "
+                             f"history (lap {self.anchor_lap})")
+        gaps = np.asarray(gaps, dtype=float)
+        n, d = gaps.shape
+        order = np.argsort(gaps, axis=1, kind="stable")
+        positions = np.empty_like(order)
+        np.put_along_axis(positions, order, np.arange(1, d + 1)[None, :], axis=1)
+        sorted_gaps = np.take_along_axis(gaps, order, axis=1)
+        ahead_sorted = np.concatenate([np.full((n, 1), np.nan), np.diff(sorted_gaps, axis=1)], axis=1)
+        gap_ahead = np.empty_like(gaps)
+        np.put_along_axis(gap_ahead, order, ahead_sorted, axis=1)
+
+        target = pd.DataFrame({
+            "driver": np.tile(np.asarray(drivers, dtype=object), n),
+            "lap_number": lap + 1,
+            "total_laps": self.total_laps,
+            "compound": _compound_categorical(compounds),
+            "tyre_age_at_lap": np.asarray(ages, dtype=int).ravel() + 1,
+            "prev_position": positions.ravel().astype(float),
+            "prev_gap_ahead": gap_ahead.ravel(),
+            "prev_gap_to_leader": gaps.ravel(),
+        })
+        pace = self.model.predict_rows(assemble_features(self.history, target, self.anchor_lap))
+        pace = pace.reshape(n, d)
+        sc = np.asarray(safety_car, dtype=bool)[:, None]
+        return np.where(sc, pace * self.model.sc_ratio, pace)
 
 
 def make_lap_time_predictor(race_id: str, anchor_lap: int) -> Callable:
@@ -416,18 +463,47 @@ def evaluate(rows: pd.DataFrame, sc_ratio: float, late_fraction: float = 0.7) ->
     }
 
 
-def main() -> int:
+def evaluate_frozen_split(rows: pd.DataFrame, sc_ratio: float) -> dict:
+    """Train on the frozen split's train races, score its held-out test races
+    (configs/tyre_split.toml: 14 races incl. 3 wet; Monaco/Monza/Baku never
+    trained on). Scoring only — never tune on these numbers."""
+    from src.evaluation.lap_time_eval import load_split
+    split = load_split()
+    test = rows["race_id"].isin(split["test_races"]).to_numpy()
+    wet = rows["race_id"].isin(split["wet_test_races"]).to_numpy()
+    model = LapTimeModel(sc_ratio=sc_ratio).fit(rows[~test])
+    pred = model.predict_rows(rows[test])
+    per_race = {
+        race_id: round(summarize(rows[test][m], pred[m])["mae_h1"], 3)
+        for race_id in sorted(rows.loc[test, "race_id"].unique())
+        for m in [(rows.loc[test, "race_id"] == race_id).to_numpy()]
+    }
+    return {
+        "held_out_test_races": summarize(rows[test], pred),
+        "held_out_dry_test_races": summarize(rows[test & ~wet], pred[~wet[test]]),
+        "held_out_test_races_mae_h1_by_race": per_race,
+        "n_train_races": int(rows.loc[~test, "race_id"].nunique()),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Evaluate on the frozen split, then train on every race and save.
+
+    --loro: leave-one-race-out instead (one fit per race; slow with 100+ races).
+    """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    argv = sys.argv[1:] if argv is None else argv
     laps = load_lap_frame()
     rows = build_training_rows(laps)
     sc_ratio = safety_car_ratio(laps)
     log.info("training rows: %d (%d races); safety-car lap ratio %.3f",
              len(rows), rows["race_id"].nunique(), sc_ratio)
 
-    metrics = evaluate(rows, sc_ratio)
+    metrics = evaluate(rows, sc_ratio) if "--loro" in argv else evaluate_frozen_split(rows, sc_ratio)
     for split, values in metrics.items():
-        log.info("%s: %s", split, {k: round(v, 3) if isinstance(v, float) else v
-                                   for k, v in values.items()})
+        if isinstance(values, dict):
+            values = {k: round(v, 3) if isinstance(v, float) else v for k, v in values.items()}
+        log.info("%s: %s", split, values)
 
     model = LapTimeModel(sc_ratio=sc_ratio).fit(rows)
     model.save(MODEL_DIR, metrics=metrics)

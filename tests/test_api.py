@@ -43,7 +43,7 @@ def test_backtest_endpoints():
 def test_frontend_index_serving():
     response = client.get("/")
     assert response.status_code == 200
-    assert "OVERTAKE" in response.text
+    assert "Overtake" in response.text
 
 
 def test_lap_prediction_model_param_validation():

@@ -36,8 +36,9 @@ except ImportError:
     gym = None  # type: ignore[assignment]
     spaces = None  # type: ignore[assignment]
 
-from src.simulation.monte_carlo import run_monte_carlo
+from src.simulation.monte_carlo import run_monte_carlo, run_monte_carlo_batch
 from src.simulation.state import RaceState
+from src.strategy.optimizer import describe_plan
 
 # Dry compounds in order (action index maps to compound choice)
 _COMPOUNDS = ["HARD", "MEDIUM", "SOFT"]
@@ -267,13 +268,13 @@ def _recommend_with_policy(
         predictor = None
 
     seed = int(np.random.default_rng().integers(2**31 - 1))
-    results = {}
-    for a in range(4):
-        meta = _action_meta(a, state.lap)
-        results[a] = run_monte_carlo(
-            state, {"name": meta["name"], "pit_laps": meta["pit_laps"], "compounds": meta["compounds"]},
-            target_driver=target_driver, n_sims=n_sims, lap_time_predictor=predictor, seed=seed,
-        )
+    metas = [_action_meta(a, state.lap) for a in range(4)]
+    batch = run_monte_carlo_batch(
+        state,
+        [{"strategy": {k: m[k] for k in ("name", "pit_laps", "compounds")}} for m in metas],
+        target_driver=target_driver, n_sims=n_sims, lap_time_predictor=predictor, seed=seed,
+    )
+    results = dict(enumerate(batch))
 
     candidates = [
         {
@@ -303,7 +304,7 @@ def _recommend_with_policy(
                      f"Simulated finish: P{expected_position:.1f} ({expected_gain:+.1f} vs stay-out).")
     if mc_best != chosen:
         gap = expected_position - float(results[mc_best]["expected_position"])
-        reasoning += (f" Monte Carlo at this state rates {_action_meta(mc_best, state.lap)['name']} "
+        reasoning += (f" Monte Carlo at this state rates '{describe_plan(_action_meta(mc_best, state.lap), state.lap)}' "
                       f"{gap:.1f} positions better — the policy generalises across races and can miss that.")
 
     return {

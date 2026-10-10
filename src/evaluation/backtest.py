@@ -480,7 +480,7 @@ def score_decision_point_fair(
     import zlib
 
     from src.models.lap_time import make_lap_time_predictor
-    from src.simulation.monte_carlo import run_monte_carlo
+    from src.simulation.monte_carlo import run_monte_carlo_batch
     from src.strategy.optimizer import generate_candidate_strategies
     from src.strategy.rl_env import _action_meta
 
@@ -524,11 +524,10 @@ def score_decision_point_fair(
     except Exception:
         predictor = None
     seed = FAIR_SEED_OFFSET + zlib.crc32(f"{race_id}|{driver}|{decision_lap}".encode()) % 1_000_000
-    expected = {
-        key: float(run_monte_carlo(state, s, target_driver=driver, n_sims=eval_sims,
-                                   lap_time_predictor=predictor, seed=seed)["expected_position"])
-        for key, s in reference.items()
-    }
+    rescored = run_monte_carlo_batch(state, [{"strategy": s} for s in reference.values()],
+                                     target_driver=driver, n_sims=eval_sims,
+                                     lap_time_predictor=predictor, seed=seed)
+    expected = {key: float(r["expected_position"]) for key, r in zip(reference, rescored)}
     best_key = min(expected, key=expected.get)
     best_pos = expected[best_key]
 

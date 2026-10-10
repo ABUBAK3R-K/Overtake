@@ -102,7 +102,9 @@ def test_predict_graph_and_safety_car():
         assert preds_sc[d] == pytest.approx(preds[d] * 1.5, rel=0.05)
 
 
-def test_contract_predict_lap_time_gnn():
+def test_contract_predict_lap_time_gnn(monkeypatch):
+    from src.models import lap_time_gnn
+    monkeypatch.setattr(lap_time_gnn, "_default_gnn_model", lambda: LapTimeGNNModel(hidden_dim=16, edge_dim=8, num_layers=1))
     state = MockState(
         lap=12,
         positions={"LEC": 1, "SAI": 2},
@@ -129,3 +131,9 @@ def test_gnn_fit_save_load(synthetic_laps, tmp_path):
     g = build_race_graph(synthetic_laps, current_lap=15)
     preds = loaded.predict_graph(g)
     assert len(preds) > 0
+
+
+def test_load_without_checkpoint_raises(tmp_path):
+    """No silent fallback to an untrained network."""
+    with pytest.raises(FileNotFoundError, match="train one"):
+        LapTimeGNNModel.load(tmp_path / "missing")

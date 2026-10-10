@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from src.simulation.monte_carlo import run_monte_carlo
+from src.simulation.monte_carlo import run_monte_carlo_batch
 from src.simulation.state import RaceState
 
 log = logging.getLogger("overtake.strategy.optimizer")
@@ -88,6 +88,34 @@ def generate_candidate_strategies(
     return candidates
 
 
+def describe_plan(candidate: dict[str, Any], lap: int) -> str:
+    """Plain-English plan, e.g. 'stay out', 'box now for Hard', 'box on lap 31 for Medium'."""
+    pit_laps = candidate.get("pit_laps") or []
+    compounds = [str(c).capitalize() for c in candidate.get("compounds") or []]
+    if not pit_laps:
+        return "stay out"
+    first = "box now" if pit_laps[0] <= lap + 1 else f"box on lap {pit_laps[0]}"
+    text = f"{first} for {compounds[0]}"
+    if len(pit_laps) > 1:
+        text += f", then lap {pit_laps[1]} for {compounds[1]}"
+    return text
+
+
+def explain_choice(best: dict[str, Any], evaluated: list[dict[str, Any]], lap: int) -> str:
+    """Why `best` won, in the simulator's own numbers: it against staying out
+    and against the runner-up."""
+    ranked = sorted(evaluated, key=lambda c: c["expected_position"])
+    stay = next((c for c in evaluated if not c.get("pit_laps")), None)
+    text = (f"Of {len(evaluated)} plans simulated, {describe_plan(best, lap)} finishes best "
+            f"on average (P{best['expected_position']:.1f}).")
+    if stay is not None and stay is not best:
+        text += f" Staying out: P{stay['expected_position']:.1f}."
+    runner = next((c for c in ranked if c is not best), None)
+    if runner is not None and runner is not stay:
+        text += f" Next best, {describe_plan(runner, lap)}: P{runner['expected_position']:.1f}."
+    return text[0].upper() + text[1:]
+
+
 def get_strategy_recommendation(
     state: RaceState,
     target_driver: str = "VER",
@@ -120,13 +148,12 @@ def get_strategy_recommendation(
     evaluated_candidates = []
     baseline_result = None
 
-    for candidate in candidates:
-        sim_res = run_monte_carlo(
-            state=state,
-            strategy=candidate,
-            target_driver=target_driver,
-            n_sims=n_sims,
-        )
+    # All candidates in one batched simulation (paired: same random draws)
+    sim_results = run_monte_carlo_batch(
+        state, [{"strategy": c} for c in candidates],
+        target_driver=target_driver, n_sims=n_sims,
+    )
+    for candidate, sim_res in zip(candidates, sim_results):
         cand_data = {
             **candidate,
             "expected_position": sim_res["expected_position"],
@@ -169,23 +196,8 @@ def get_strategy_recommendation(
     pit_laps = best_candidate.get("pit_laps", [])
     pit_lap = pit_laps[0] if pit_laps else None
 
-    # Construct tactical reasoning
-    current_comp, current_age = state.tyres.get(target_driver, ("MEDIUM", 1))
-    if action == "STAY OUT":
-        reasoning = (
-            f"Current {current_comp} tyres (age {current_age}) have sufficient life. "
-            f"Pitting incurs ~22s track loss which cannot be recovered over remaining {state.total_laps - state.lap} laps."
-        )
-    elif "BOX THIS LAP" in action:
-        reasoning = (
-            f"Box immediately for fresh {tyre}. Current {current_comp} (age {current_age}) is degrading rapidly. "
-            f"Expected gain of {expected_gain:+.1f} positions with fresh tyre pace advantage."
-        )
-    else:
-        reasoning = (
-            f"Target pit window around Lap {pit_lap} for {tyre}. Maximizes tyre offset against competitors "
-            f"while protecting track position (expected finish P{best_candidate['expected_position']:.1f})."
-        )
+    # Reasoning built only from what was simulated
+    reasoning = explain_choice(best_candidate, evaluated_candidates, state.lap)
 
     return {
         "target_driver": target_driver,

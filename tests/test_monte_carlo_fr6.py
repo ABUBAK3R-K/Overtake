@@ -122,7 +122,12 @@ def test_monte_carlo_trajectory_bands(base_race_state):
 
 
 def test_monte_carlo_execution_speed_benchmark(base_race_state):
-    """Verify FR-6 performance: 1000 forward simulations over 32 laps complete quickly (< 2.0s)."""
+    """FR-6 performance: 1000 simulations over 32 laps, lap-time model included.
+
+    The model (one XGBoost call per lap for every sim x driver) is most of
+    the cost, ~2.5 s here; a sub-second budget is only reachable by
+    skipping it, which an earlier version did by accident.
+    """
     t0 = time.perf_counter()
     res = run_monte_carlo(
         state=base_race_state,
@@ -134,7 +139,29 @@ def test_monte_carlo_execution_speed_benchmark(base_race_state):
     elapsed = time.perf_counter() - t0
 
     assert res["n_sims"] == 1000
-    assert elapsed < 2.0, f"Monte Carlo 1000 sims took {elapsed:.2f}s, expected < 2.0s"
+    assert elapsed < 8.0, f"Monte Carlo 1000 sims took {elapsed:.2f}s, expected < 8.0s"
+
+
+class _FixedPacePredictor:
+    """Stands in for LapTimePredictor: fixed per-driver lap times."""
+
+    def __init__(self, paces: dict[str, float]):
+        self.paces, self.calls = paces, 0
+
+    def predict_arrays(self, lap, drivers, compounds, ages, gaps, safety_car):
+        self.calls += 1
+        return np.tile([self.paces[d] for d in drivers], (len(gaps), 1)).astype(float)
+
+
+def test_monte_carlo_uses_lap_time_model(base_race_state):
+    """Simulated pace must come from the lap-time model, not just last-lap pace + wear."""
+    paces = {d: 95.0 for d in base_race_state.positions}
+    paces["NOR"] = 90.0  # last in the state, 35 s back; 5 s/lap faster for 32 laps
+    predictor = _FixedPacePredictor(paces)
+    res = run_monte_carlo(base_race_state, target_driver="NOR", n_sims=200,
+                          lap_time_predictor=predictor)
+    assert predictor.calls == base_race_state.total_laps - base_race_state.lap
+    assert res["win_prob"] == 1.0
 
 
 def test_monte_carlo_reproducibility(base_race_state):
@@ -188,3 +215,29 @@ def test_strategy_optimizer_with_fr6_distributions(base_race_state):
     assert "points_prob" in cand
     assert "percentiles" in cand
     assert "ci_95" in cand
+
+
+def test_rival_strategy_is_followed(base_race_state):
+    """A rival on a fixed plan pits exactly when told (not by the heuristic)."""
+    paces = {d: 95.0 for d in base_race_state.positions}
+    stay = run_monte_carlo(base_race_state, target_driver="VER", n_sims=100,
+                           lap_time_predictor=_FixedPacePredictor(paces),
+                           rival_strategies={"PER": {"pit_laps": [], "compounds": []}})
+    boxed = run_monte_carlo(base_race_state, target_driver="VER", n_sims=100,
+                            lap_time_predictor=_FixedPacePredictor(paces),
+                            rival_strategies={"PER": {"pit_laps": [26], "compounds": ["HARD"]}})
+    # Equal pace, so a 22 s stop costs PER places it never recovers
+    assert boxed["expected_position_by_driver"]["PER"] > stay["expected_position_by_driver"]["PER"] + 1
+
+
+def test_batch_matches_single_runs(base_race_state):
+    """Each scenario of a batch equals the single run with the same seed."""
+    from src.simulation.monte_carlo import run_monte_carlo_batch
+    paces = {d: 95.0 + i * 0.1 for i, d in enumerate(base_race_state.positions)}
+    plans = [{"pit_laps": [], "compounds": []}, {"pit_laps": [28], "compounds": ["HARD"]}]
+    batch = run_monte_carlo_batch(base_race_state, [{"strategy": p} for p in plans], "HAM", 80,
+                                  _FixedPacePredictor(paces), seed=7)
+    for plan, res in zip(plans, batch):
+        single = run_monte_carlo(base_race_state, plan, "HAM", 80, _FixedPacePredictor(paces), seed=7)
+        assert res["finish_prob_by_position"] == single["finish_prob_by_position"]
+        assert res["expected_position_by_driver"] == single["expected_position_by_driver"]
