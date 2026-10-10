@@ -1,0 +1,15 @@
+.git
+.githooks
+.venv
+.pytest_cache
+**/__pycache__
+*.log
+*.out
+notebooks
+tests
+scripts
+data/cache
+data/models/**/archive_*
+data/models/backtest/checkpoint.jsonl
+data/models/rl/dataset.jsonl
+*.pdf

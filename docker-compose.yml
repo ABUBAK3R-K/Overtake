@@ -1,4 +1,16 @@
-# Placeholder for the local one-command demo (Design.md Section 8, P1).
-# backend + frontend services and the mounted data volume are added in the
-# packaging step, once both lanes have API endpoints.
-services: {}
+# One-command local run (Design.md Section 8):
+#
+#   docker compose up --build        # then open http://localhost:8000
+#
+# Everything except the Driver/corner view works from the image alone. That
+# view reads full FastF1 telemetry, so the local cache is mounted below; with
+# an empty data/cache the view reports an error and the rest is unaffected.
+services:
+  overtake:
+    build: .
+    image: overtake:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/cache:/app/data/cache
+    restart: unless-stopped
